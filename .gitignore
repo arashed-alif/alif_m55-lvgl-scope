@@ -5,3 +5,7 @@ tmp/
 *.cbuild-run.yml
 *.cbuild.yml
 *.clangd
+cmsis.json
+settings.json
+Pre_Include_Global.h
+RTE_Components.h
