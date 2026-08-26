@@ -6,23 +6,26 @@ solution:
   # List of tested compilers that can be selected
   select-compiler:
     - compiler: GCC
-    - compiler: CLANG
 
   # Select used compiler
   compiler: GCC
 
   packs:
-    - pack: AlifSemiconductor::Ensemble@2.1.0
     - pack: ARM::CMSIS@>=6.1.0
+    - pack: ARM::CMSIS-Compiler@>=2.0.0
     - pack: ARM::CMSIS-FreeRTOS@>=10.5.1
-    - pack: LVGL::lvgl@9.5.0
     - pack: AlifSemiconductor::Dave2DDriver@2.0.3
+    - pack: AlifSemiconductor::Ensemble@2.2.0
     - pack: AlifSemiconductor::LVGL_DAVE2D@1.2.0
+    - pack: LVGL::lvgl@9.5.0
 
   target-types:
     - type: DevKit-E7-HE
       device: Alif Semiconductor::AE722F80F55D5LS:M55_HE
       board: Alif Semiconductor::DevKit-E7
+      define:
+        - "CORE_M55_HE"
+        - "M55_HE"
       variables:
         - BoardLayer: $SolutionDir()$/board/devkit-e7/board.clayer.yml
       target-set:
@@ -33,6 +36,9 @@ solution:
     - type: DevKit-E7-HP
       device: Alif Semiconductor::AE722F80F55D5LS:M55_HP
       board: Alif Semiconductor::DevKit-E7
+      define:
+        - "CORE_M55_HP"
+        - "M55_HP"
       variables:
         - BoardLayer: $SolutionDir()$/board/devkit-e7/board.clayer.yml
       target-set:
@@ -43,6 +49,11 @@ solution:
     # - type: DevKit-E1C-HE
     #   device: Alif Semiconductor::AE1C1F4051920PH0:M55_HE
     #   board: Alif Semiconductor::DevKit-E1C
+    #   define:
+    #     - "ENSEMBLE_SOC_E1C"
+    #     - "CORE_M55_HE"
+    #     - "M55_HE_E1C"
+    #     - "M55_HE"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/devkit-e1c/board.clayer.yml
     #   target-set:
@@ -51,6 +62,10 @@ solution:
     - type: DevKit-E8-HE
       device: Alif Semiconductor::AE822FA0E5597LS0:M55_HE
       board: Alif Semiconductor::DevKit-E8
+      define:
+        - "ENSEMBLE_SOC_GEN2"
+        - "CORE_M55_HE"
+        - "M55_HE"
       variables:
         - BoardLayer: $SolutionDir()$/board/devkit-e8/board.clayer.yml
       target-set:
@@ -61,15 +76,24 @@ solution:
     - type: DevKit-E8-HP
       device: Alif Semiconductor::AE822FA0E5597LS0:M55_HP
       board: Alif Semiconductor::DevKit-E8
+      define:
+        - "ENSEMBLE_SOC_GEN2"
+        - "CORE_M55_HP"
+        - "M55_HP"
       variables:
         - BoardLayer: $SolutionDir()$/board/devkit-e8/board.clayer.yml
       target-set:
         - set:
           images:
             - project-context: app.release
+
     # - type: AppKit-E8-HE
     #   device: Alif Semiconductor::AE822FA0E5597BS0:M55_HE
     #   board: Alif Semiconductor::AppKit-E8-AIML
+    #   define:
+    #     - "ENSEMBLE_SOC_GEN2"
+    #     - "CORE_M55_HE"
+    #     - "M55_HE"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
     #   target-set:
@@ -78,6 +102,10 @@ solution:
     # - type: AppKit-E8-HP
     #   device: Alif Semiconductor::AE822FA0E5597BS0:M55_HP
     #   board: Alif Semiconductor::AppKit-E8-AIML
+    #   define:
+    #     - "ENSEMBLE_SOC_GEN2"
+    #     - "CORE_M55_HP"
+    #     - "M55_HP"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
     #   target-set:

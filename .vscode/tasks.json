@@ -29,202 +29,153 @@
             "problemMatcher": []
         },
         {
-            "label": "First time pack installation",
+            "label": "First time CMSIS pack installation",
             "type": "shell",
             "command": [
                 "cpackget init https://www.keil.com/pack/index.pidx;",
-                "cpackget add https://github.com/ARM-software/CMSIS_6/releases/download/v6.1.0/ARM.CMSIS.6.1.0.pack;",
-                "cpackget add https://github.com/alifsemi/alif_ensemble-cmsis-dfp/releases/download/v2.1.0/AlifSemiconductor.Ensemble.2.1.0.pack;",
-                "cpackget add https://github.com/ARM-software/CMSIS-FreeRTOS/releases/download/v10.5.1/ARM.CMSIS-FreeRTOS.10.5.1.pack;",
-                "cpackget add https://github.com/lvgl/lvgl/raw/v9.5.0/env_support/cmsis-pack/LVGL.lvgl.9.5.0.pack;",
-                "cpackget add https://github.com/alifsemi/alif_dave2d-driver/releases/download/v2.0.2/AlifSemiconductor.Dave2DDriver.2.0.2.pack;",
-                "cpackget add https://github.com/alifsemi/alif_lvgl-dave2d/releases/download/v1.2.0/AlifSemiconductor.LVGL_DAVE2D.1.2.0.pack;",
+                "cpackget add https://github.com/ARM-software/CMSIS_6/releases/download/v6.2.0/ARM.CMSIS.6.2.0.pack;",
+                "cpackget add https://github.com/alifsemi/alif_ensemble-cmsis-dfp/releases/download/v2.2.0/AlifSemiconductor.Ensemble.2.2.0.pack;",
                 "cpackget list;",
                 "echo 'Pack installation has been completed'"
             ],
             "problemMatcher": []
         },
         {
-            "label": "Prepare program with Security Toolkit",
+            "label": "Alif: Prepare program with Security Toolkit (single core)",
             "type": "shell",
             "command": [
                 "outputElfFilename='${command:cmsis-csolution.getBinaryFile}';",
-                "cp \"${outputElfFilename/%???/bin}\" '${config:alif.setools.root}/build/images/alif-img.bin';",
-                "cp './.alif/${command:cmsis-csolution.getProcessorName}_cfg.json' '${config:alif.setools.root}/alif-img.json';"
+                "cp \"${outputElfFilename/%???/bin}\" '${config:alif.setools.root}/build/images/${command:cmsis-csolution.getProcessorName}_img.bin';",
+                "cp './.alif/${command:cmsis-csolution.getProcessorName}_cfg.json' '${config:alif.setools.root}/alif-img.json';",
+                "cp './.alif/app-device-config-no-hfxo.json' '${config:alif.setools.root}/build/config/app-device-config-no-hfxo.json';"
             ],
             "windows": {
                 "command": [
                     "$outputElfFilename='${command:cmsis-csolution.getBinaryFile}';",
                     "$outputBinFilename=${outputElfFilename}.Substring(0, $outputElfFilename.Length -3) + 'bin';",
-                    "cp \"$outputBinFilename\" '${config:alif.setools.root}/build/images/alif-img.bin';",
-                    "cp './.alif/${command:cmsis-csolution.getProcessorName}_cfg.json' '${config:alif.setools.root}/alif-img.json';"
-                ]
+                    "cp \"$outputBinFilename\" '${config:alif.setools.root}/build/images/${command:cmsis-csolution.getProcessorName}_img.bin';",
+                    "cp './.alif/${command:cmsis-csolution.getProcessorName}_cfg.json' '${config:alif.setools.root}/alif-img.json';",
+                    "cp './.alif/app-device-config-no-hfxo.json' '${config:alif.setools.root}/build/config/app-device-config-no-hfxo.json';"
+                ],
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
             },
             "problemMatcher": []
         },
         {
-            "label": "Program with Security Toolkit",
+            "label": "Alif: Prepare program with Security Toolkit (dual core)",
+            "type": "shell",
+            "command": [
+                "outputElfFilenameHE='${command:cmsis-csolution.getBinaryFile}';",
+                "outputElfFilenameHE=$(echo \"$outputElfFilenameHE\" | sed 's/hp/he/g; s/HP/HE/g');",
+                "cp \"${outputElfFilenameHE/%???/bin}\" '${config:alif.setools.root}/build/images/M55_HE_img.bin';",
+                "outputElfFilenameHP=$(echo \"$outputElfFilenameHE\" | sed 's/he/hp/g; s/HE/HP/g');",
+                "cp \"${outputElfFilenameHP/%???/bin}\" '${config:alif.setools.root}/build/images/M55_HP_img.bin';",
+                "cp './.alif/M55_HP_HE_cfg.json' '${config:alif.setools.root}/alif-img.json';",
+                "cp './.alif/app-device-config-no-hfxo.json' '${config:alif.setools.root}/build/config/app-device-config-no-hfxo.json';"
+            ],
+            "windows": {
+                "command": [
+                    "$outputElfFilenameHE='${command:cmsis-csolution.getBinaryFile}';",
+                    "$outputBinFilenameHE=$outputElfFilenameHE.Substring(0, $outputElfFilenameHE.Length -3) + 'bin';",
+                    "$outputBinFilenameHE=$outputBinFilenameHE -replace 'hp','he' -replace 'HP','HE';",
+                    "cp \"$outputBinFilenameHE\" '${config:alif.setools.root}/build/images/M55_HE_img.bin';",
+                    "$outputBinFilenameHP=$outputBinFilenameHE -replace 'he','hp' -replace 'HE','HP';",
+                    "cp \"$outputBinFilenameHP\" '${config:alif.setools.root}/build/images/M55_HP_img.bin';",
+                    "cp './.alif/M55_HP_HE_cfg.json' '${config:alif.setools.root}/alif-img.json';",
+                    "cp './.alif/app-device-config-no-hfxo.json' '${config:alif.setools.root}/build/config/app-device-config-no-hfxo.json';"
+                ],
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: Program with Security Toolkit (single core)",
             "type": "shell",
             "options": {
                 "cwd": "${config:alif.setools.root}"
             },
             "command": [
                 "./app-gen-toc -f alif-img.json;",
-                "./app-write-mram -p;",
-                "rm ./build/images/alif-img.bin;",
+                "./app-write-mram -a -p;",
                 "rm ./alif-img.json;"
             ],
             "problemMatcher": [],
-            "dependsOn": "Prepare program with Security Toolkit"
+            "dependsOn": "Alif: Prepare program with Security Toolkit (single core)"
         },
         {
-            "label": "Program with Security Toolkit (select COM port)",
+            "label": "Alif: Program with Security Toolkit (dual core)",
             "type": "shell",
             "options": {
                 "cwd": "${config:alif.setools.root}"
             },
             "command": [
                 "./app-gen-toc -f alif-img.json;",
-                "./app-write-mram -p -d;",
-                "rm ./build/images/alif-img.bin;",
+                "./app-write-mram -a -p;",
                 "rm ./alif-img.json;"
             ],
             "problemMatcher": [],
-            "dependsOn": "Prepare program with Security Toolkit"
+            "dependsOn": "Alif: Prepare program with Security Toolkit (dual core)"
         },
         {
-            "label": "Update TOC with Security Toolkit",
-            "type": "shell",
-            "options": {
-                "cwd": "${config:alif.setools.root}"
-            },
-            "command": [
-                "./app-gen-toc -f alif-img.json;",
-                "./app-write-mram -S;",
-                "rm ./build/images/alif-img.bin;",
-                "rm ./alif-img.json;"
-            ],
-            "problemMatcher": [],
-            "dependsOn": "Prepare program with Security Toolkit"
-        },
-        {
-            "label": "Install debug stubs with Security Toolkit",
-            "type": "shell",
-            "options": {
-                "cwd": "${config:alif.setools.root}"
-            },
-            "command": [
-                "./app-gen-toc -f ./build/config/app-cpu-stubs.json;",
-                "./app-write-mram;"
-            ],
-            "problemMatcher": []
-        },
-        {
-            "label": "Install debug stubs with Security Toolkit (select COM port)",
-            "type": "shell",
-            "options": {
-                "cwd": "${config:alif.setools.root}"
-            },
-            "command": [
-                "./app-gen-toc -f ./build/config/app-cpu-stubs.json;",
-                "./app-write-mram -d;"
-            ],
-            "problemMatcher": []
-        },
-        {
-            "label": "CMSIS Erase",
+            "label": "Alif: Change the device part number used by Security Toolkit",
             "type": "shell",
             "command": [
-                "echo Connect > .cmd.jlink &&",
-                "echo Erase >> .cmd.jlink &&",
-                "echo Exit >> .cmd.jlink &&",
-                "JLinkExe -device AE822FA0E5597LS0_M55_HP -if swd -speed 4000 -commandfile .cmd.jlink"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}/",
-                "shell": {
-                    "executable": "/bin/bash",
-                    "args": [
-                        "-c"
-                    ]
-                }
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "CMSIS Load",
-            "type": "shell",
-            "command": [
-                "echo Connect > .cmd.jlink &&",
-                "echo LoadFile \"out/app/DevKit-E8-HP/release/app.elf\" >> .cmd.jlink &&",
-                "echo Exit >> .cmd.jlink &&",
-                "JLinkExe -device AE822FA0E5597LS0_M55_HP -if swd -speed 4000 -commandfile .cmd.jlink"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}/",
-                "shell": {
-                    "executable": "/bin/bash",
-                    "args": [
-                        "-c"
-                    ]
-                }
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "CMSIS Run",
-            "type": "shell",
-            "command": "JLinkGDBServerCLExe",
-            "options": {
-                "cwd": "${workspaceFolder}/",
-                "shell": {
-                    "executable": "/bin/bash",
-                    "args": [
-                        "-c"
-                    ]
-                }
-            },
-            "args": [
-                "-device",
-                "AE822FA0E5597LS0_M55_HP",
-                "-endian",
-                "little",
-                "-if",
-                "swd",
-                "-speed",
-                "4000",
-                "-nohalt",
-                "-noir",
-                "-nogui",
-                "-localhostonly",
-                "-silent",
-                "-port",
-                "3333",
-                "-TelnetPort",
-                "4444"
-            ],
-            "problemMatcher": []
-        },
-        {
-            "label": "CMSIS Load+Run",
-            "dependsOn": [
-                "CMSIS Load",
-                "CMSIS Run"
-            ],
-            "dependsOrder": "sequence",
-            "problemMatcher": []
-        },
-        {
-            "label": "Alif: Install M55_HE or M55_HP debug stubs (single core configuration)",
-            "type": "shell",
-            "command": [
-                "cp './.alif/M55_HE_mram_cfg.json' '${config:alif.setools.root}/build/config/M55_HE_mram_cfg.json';",
-                "cp './.alif/M55_HP_mram_cfg.json' '${config:alif.setools.root}/build/config/M55_HP_mram_cfg.json';",
-                "cp './.alif/M55_HP_mram_stub.bin' '${config:alif.setools.root}/build/images/M55_HP_mram_stub.bin';",
-                "cp './.alif/M55_HE_mram_stub.bin' '${config:alif.setools.root}/build/images/M55_HE_mram_stub.bin';",
                 "cd '${config:alif.setools.root}';",
-                "./app-gen-toc -f 'build/config/${command:cmsis-csolution.getProcessorName}_mram_cfg.json';",
-                "./app-write-mram -p;"
+                "./tools-config;"
             ],
             "windows": {
                 "options": {
@@ -259,15 +210,353 @@
             "problemMatcher": []
         },
         {
-            "label": "Alif: Install M55_HE and M55_HP debug stubs (dual core configuration)",
+            "label": "Alif: enable JTAG for devices in LCS=SE",
             "type": "shell",
             "command": [
-                "cp './.alif/M55_HP_HE_mram_cfg.json' '${config:alif.setools.root}/build/config/M55_HP_HE_mram_cfg.json';",
-                "cp './.alif/M55_HP_mram_stub.bin' '${config:alif.setools.root}/build/images/M55_HP_mram_stub.bin';",
-                "cp './.alif/M55_HE_mram_stub.bin' '${config:alif.setools.root}/build/images/M55_HE_mram_stub.bin';",
                 "cd '${config:alif.setools.root}';",
-                "./app-gen-toc -f 'build/config/M55_HP_HE_mram_cfg.json';",
-                "./app-write-mram -p;"
+                "./app-secure-debug;"
+            ],
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: update SE firmware version",
+            "type": "shell",
+            "command": [
+                "cd '${config:alif.setools.root}';",
+                "./updateSystemPackage;"
+            ],
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: launch maintenance tool",
+            "type": "shell",
+            "command": [
+                "cd '${config:alif.setools.root}';",
+                "./maintenance;"
+            ],
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: launch maintenance tool (select COM port)",
+            "type": "shell",
+            "command": [
+                "cd '${config:alif.setools.root}';",
+                "./maintenance -d;"
+            ],
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: put chip in maintenance mode",
+            "type": "shell",
+            "command": [
+                "cp './.alif/cmds_hard_maintenance.txt' '${config:alif.setools.root}/cmds_hard_maintenance.txt';",
+                "cd '${config:alif.setools.root}';",
+                "./maintenance < cmds_hard_maintenance.txt;"
+            ],
+            "windows": {
+                "command": [
+                    "cp './.alif/cmds_hard_maintenance.txt' '${config:alif.setools.root}/cmds_hard_maintenance.txt';",
+                    "cd '${config:alif.setools.root}';",
+                    "Get-Content cmds_hard_maintenance.txt | ./maintenance;"
+                ],
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: put chip in maintenance mode and erase",
+            "type": "shell",
+            "command": [
+                "cp './.alif/cmds_fast_erase.txt' '${config:alif.setools.root}/cmds_fast_erase.txt';",
+                "cp './.alif/cmds_hard_maintenance.txt' '${config:alif.setools.root}/cmds_hard_maintenance.txt';",
+                "cd '${config:alif.setools.root}';",
+                "./maintenance < cmds_hard_maintenance.txt;",
+                "sleep 3;",
+                "./maintenance < cmds_fast_erase.txt;"
+            ],
+            "windows": {
+                "command": [
+                    "cp './.alif/cmds_fast_erase.txt' '${config:alif.setools.root}/cmds_fast_erase.txt';",
+                    "cp './.alif/cmds_hard_maintenance.txt' '${config:alif.setools.root}/cmds_hard_maintenance.txt';",
+                    "cd '${config:alif.setools.root}';",
+                    "Get-Content cmds_hard_maintenance.txt | ./maintenance;",
+                    "Start-Sleep -Seconds 3;",
+                    "Get-Content cmds_fast_erase.txt | ./maintenance;"
+                ],
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: get chip revision information",
+            "type": "shell",
+            "command": [
+                "cp './.alif/cmds_get_revision_info.txt' '${config:alif.setools.root}/cmds_get_revision_info.txt';",
+                "cd '${config:alif.setools.root}';",
+                "./maintenance < cmds_get_revision_info.txt | grep -a -e \"v1.\" -e \"MfgData\" -e \"LCS\" -e \"HBK[0-1]\" -e \"Version\";"
+            ],
+            "windows": {
+                "command": [
+                    "cp './.alif/cmds_get_revision_info.txt' '${config:alif.setools.root}/cmds_get_revision_info.txt';",
+                    "cd '${config:alif.setools.root}';",
+                    "Get-Content cmds_get_revision_info.txt | ./maintenance | Select-String -Pattern 'v1\\.','MfgData','LCS','HBK[0-1]','Version';"
+                ],
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: install app-cpu-stubs.json (debug stubs with PLL)",
+            "type": "shell",
+            "command": [
+                "cp './.alif/app-device-config.json' '${config:alif.setools.root}/build/config/app-device-config.json';",
+                "cp './.alif/app-cpu-stubs.json' '${config:alif.setools.root}/build/config/app-cpu-stubs.json';",
+                "cd '${config:alif.setools.root}';",
+                "./app-gen-toc -f ./build/config/app-cpu-stubs.json;",
+                "./app-write-mram -a;"
+            ],
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "powershell.exe",
+                        "args": [
+                            "-Command"
+                        ]
+                    }
+                }
+            },
+            "linux": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "osx": {
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": [
+                            "-c"
+                        ]
+                    }
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Alif: install app-cpu-stubs-hfrc.json (debug stubs with HFRC)",
+            "type": "shell",
+            "command": [
+                "cp './.alif/app-device-config-no-hfxo.json' '${config:alif.setools.root}/build/config/app-device-config-no-hfxo.json';",
+                "cp './.alif/app-cpu-stubs-hfrc.json' '${config:alif.setools.root}/build/config/app-cpu-stubs-hfrc.json';",
+                "cd '${config:alif.setools.root}';",
+                "./app-gen-toc -f ./build/config/app-cpu-stubs-hfrc.json;",
+                "./app-write-mram -a;"
             ],
             "windows": {
                 "options": {

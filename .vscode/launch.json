@@ -2,12 +2,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Alif Ensemble Debug (Cortex-Debug)",
+            "name": "Debug",
             "cwd": "${workspaceFolder}",
             "executable": "${command:cmsis-csolution.getBinaryFile}",
             "request": "launch",
             "type": "cortex-debug",
-            "runToEntryPoint": "main",
+            // "runToEntryPoint": "main",
+            "runToEntryPoint": "Reset_Handler_C",
             "servertype": "jlink",
             "showDevDebugOutput": "parsed",
             "device": "${command:cmsis-csolution.getDeviceName}_${command:cmsis-csolution.getProcessorName}",
@@ -36,126 +37,32 @@
             }
         },
         {
-            "name": "M55_HP JLink (launch)",
-            "type": "gdbtarget",
-            "request": "launch",
-            "cwd": "${workspaceFolder}/",
-            "program": "out/app/DevKit-E8-HP/release/app.elf",
-            "gdb": "arm-none-eabi-gdb",
-            "auxiliaryGdb": true,
-            "preLaunchTask": "CMSIS Load",
-            "initCommands": [
-                "monitor reset 0",
-                "tbreak main",
-                ""
-            ],
-            "customResetCommands": [
-                "monitor reset 0",
-                "maintenance flush register-cache",
-                "maintenance flush dcache",
-                "tbreak main",
-                "continue"
-            ],
-            "target": {
-                "server": "JLinkGDBServerCLExe",
-                "serverParameters": [
-                    "-device",
-                    "AE822FA0E5597LS0_M55_HP",
-                    "-endian",
-                    "little",
-                    "-if",
-                    "swd",
-                    "-speed",
-                    "4000",
-                    "-halt",
-                    "-noir",
-                    "-vd",
-                    "-nogui",
-                    "-localhostonly",
-                    "-silent",
-                    "-port",
-                    "3333",
-                    "-TelnetPort",
-                    "4444"
-                ],
-                "port": "3333"
-            },
-            "cmsis": {
-                "cbuildRunFile": "${command:cmsis-csolution.getCbuildRunFile}",
-                "updateConfiguration": "auto"
-            }
-        },
-        {
-            "name": "M55_HP JLink (attach)",
-            "type": "gdbtarget",
+            "name": "Attach",
+            "cwd": "${workspaceFolder}",
+            "executable": "${command:cmsis-csolution.getBinaryFile}",
             "request": "attach",
-            "cwd": "${workspaceFolder}/",
-            "program": "out/app/DevKit-E8-HP/release/app.elf",
-            "gdb": "arm-none-eabi-gdb",
-            "auxiliaryGdb": true,
-            "initCommands": [
-                ""
+            "type": "cortex-debug",
+            "runToEntryPoint": "main",
+            "servertype": "jlink",
+            "showDevDebugOutput": "parsed",
+            "device": "${command:cmsis-csolution.getDeviceName}_${command:cmsis-csolution.getProcessorName}",
+            "interface": "jtag",
+            "serverArgs": [
+                "-JLinkDevicesXmlPath",
+                ".alif/JLinkDevices.xml"
             ],
-            "customResetCommands": [
-                "monitor reset 0",
-                "maintenance flush register-cache",
-                "maintenance flush dcache",
-                "tbreak main",
-                "continue"
+            "preAttachCommands": [
+                "monitor speed 15000"
             ],
-            "target": {
-                "port": "3333"
-            },
-            "cmsis": {
-                "cbuildRunFile": "${command:cmsis-csolution.getCbuildRunFile}",
-                "updateConfiguration": "auto"
-            }
-        },
-        {
-            "name": "M55_HE JLink (launch)",
-            "type": "gdbtarget",
-            "request": "launch",
-            "cwd": "${workspaceFolder}/",
-            "program": "",
-            "gdb": "arm-none-eabi-gdb",
-            "auxiliaryGdb": true,
-            "initCommands": [
-                ""
-            ],
-            "customResetCommands": [
-                "monitor reset 0",
-                "maintenance flush register-cache",
-                "maintenance flush dcache",
-                "tbreak main",
-                "continue"
-            ],
-            "target": {
-                "server": "JLinkGDBServerCLExe",
-                "serverParameters": [
-                    "-device",
-                    "AE822FA0E5597LS0_M55_HE",
-                    "-endian",
-                    "little",
-                    "-if",
-                    "swd",
-                    "-speed",
-                    "4000",
-                    "-halt",
-                    "-noir",
-                    "-vd",
-                    "-nogui",
-                    "-localhostonly",
-                    "-silent",
-                    "-port",
-                    "3334",
-                    "-TelnetPort",
-                    "4445"
-                ],
-                "port": "3334"
-            },
-            "cmsis": {
-                "cbuildRunFile": "${command:cmsis-csolution.getCbuildRunFile}",
-                "updateConfiguration": "auto"
+            "rttConfig": {
+                "enabled": true,
+                "address": "auto",
+                "decoders": [
+                    {
+                        "port": 0,
+                        "type": "console"
+                    }
+                ]
             }
         }
     ]

@@ -5,6 +5,7 @@ default:
       C:
         - -std=c99
         - -fdata-sections
+        - -ffunction-sections
 
       Link:
         - --specs=nosys.specs
