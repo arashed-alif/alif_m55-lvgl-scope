@@ -15,7 +15,7 @@
         "flags": ["load","boot"]
     },
     "HP_DBG": {
-        "disabled": true,
+        "disabled": false,
         "binary": "m55_stub_hp.bin",
         "version" : "1.0.0",
         "signed": true,

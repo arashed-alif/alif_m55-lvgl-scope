@@ -87,29 +87,33 @@ solution:
           images:
             - project-context: app.release
 
-    # - type: AppKit-E8-HE
-    #   device: Alif Semiconductor::AE822FA0E5597BS0:M55_HE
-    #   board: Alif Semiconductor::AppKit-E8-AIML
-    #   define:
-    #     - "ENSEMBLE_SOC_GEN2"
-    #     - "CORE_M55_HE"
-    #     - "M55_HE"
-    #   variables:
-    #     - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
-    #   target-set:
-    #     - set:
+    - type: AppKit-E8-HE
+      device: Alif Semiconductor::AE822FA0E5597BS0:M55_HE
+      board: Alif Semiconductor::AppKit-E8-AIML
+      define:
+        - "ENSEMBLE_SOC_GEN2"
+        - "CORE_M55_HE"
+        - "M55_HE"
+      variables:
+        - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
+      target-set:
+        - set:
+          images:
+            - project-context: app.release
 
-    # - type: AppKit-E8-HP
-    #   device: Alif Semiconductor::AE822FA0E5597BS0:M55_HP
-    #   board: Alif Semiconductor::AppKit-E8-AIML
-    #   define:
-    #     - "ENSEMBLE_SOC_GEN2"
-    #     - "CORE_M55_HP"
-    #     - "M55_HP"
-    #   variables:
-    #     - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
-    #   target-set:
-    #     - set:
+    - type: AppKit-E8-HP
+      device: Alif Semiconductor::AE822FA0E5597BS0:M55_HP
+      board: Alif Semiconductor::AppKit-E8-AIML
+      define:
+        - "ENSEMBLE_SOC_GEN2"
+        - "CORE_M55_HP"
+        - "M55_HP"
+      variables:
+        - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
+      target-set:
+        - set:
+          images:
+            - project-context: app.release
 
   build-types:
     - type: debug
