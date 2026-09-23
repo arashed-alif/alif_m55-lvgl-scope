@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Open-CMSIS-Pack/devtools/tools/projmgr/2.12.0/tools/projmgr/schemas/clayer.schema.json
+layer:
+  type: Print Redirection
+  packs:
+    - pack: ARM::CMSIS-Compiler@^2.0.0
+    - pack: AlifSemiconductor::Ensemble@^2.2.0
+  components:
+    - component: ARM::CMSIS-Compiler:CORE
+    - component: ARM::CMSIS-Compiler:STDOUT:Custom
+    - component: AlifSemiconductor::CMSIS Driver:USART
+    - component: AlifSemiconductor::Services:Retarget IO:STDOUT

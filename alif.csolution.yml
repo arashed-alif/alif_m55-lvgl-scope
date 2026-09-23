@@ -31,6 +31,7 @@ solution:
     #     - "M55_HE"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/devkit-e7/board.clayer.yml
+    #     - StdioLayer: $SolutionDir()$/board/devkit-e7/stdio.clayer.yml
     #   target-set:
     #     - set:
     #       images:
@@ -44,6 +45,7 @@ solution:
         - "M55_HP"
       variables:
         - BoardLayer: $SolutionDir()$/board/devkit-e7/board.clayer.yml
+        - StdioLayer: $SolutionDir()$/board/devkit-e7/stdio.clayer.yml
       target-set:
         - set:
           images:
@@ -59,6 +61,7 @@ solution:
     #     - "M55_HE"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/devkit-e1c/board.clayer.yml
+    #     - StdioLayer: $SolutionDir()$/board/devkit-e1c/stdio.clayer.yml
     #   target-set:
     #     - set:
 
@@ -71,6 +74,7 @@ solution:
     #     - "M55_HE"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/devkit-e8/board.clayer.yml
+    #     - StdioLayer: $SolutionDir()$/board/devkit-e8/stdio.clayer.yml
     #   target-set:
     #     - set:
     #       images:
@@ -85,6 +89,7 @@ solution:
         - "M55_HP"
       variables:
         - BoardLayer: $SolutionDir()$/board/devkit-e8/board.clayer.yml
+        - StdioLayer: $SolutionDir()$/board/devkit-e8/stdio.clayer.yml
       target-set:
         - set:
           images:
@@ -99,6 +104,7 @@ solution:
     #     - "M55_HE"
     #   variables:
     #     - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
+    #     - StdioLayer: $SolutionDir()$/board/appkit-e8/stdio.clayer.yml
     #   target-set:
     #     - set:
     #       images:
@@ -113,6 +119,7 @@ solution:
         - "M55_HP"
       variables:
         - BoardLayer: $SolutionDir()$/board/appkit-e8/board.clayer.yml
+        - StdioLayer: $SolutionDir()$/board/appkit-e8/stdio.clayer.yml
       target-set:
         - set:
           images:

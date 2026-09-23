@@ -6,6 +6,7 @@ cbuild-pack:
     - resolved-pack: ARM::CMSIS-Compiler@2.1.0
       selected-by-pack:
         - ARM::CMSIS-Compiler@>=2.0.0
+        - ARM::CMSIS-Compiler@^2.0.0
     - resolved-pack: ARM::CMSIS-FreeRTOS@11.2.0
       selected-by-pack:
         - ARM::CMSIS-FreeRTOS@>=10.5.1
@@ -15,6 +16,7 @@ cbuild-pack:
     - resolved-pack: AlifSemiconductor::Ensemble@2.2.0
       selected-by-pack:
         - AlifSemiconductor::Ensemble@2.2.0
+        - AlifSemiconductor::Ensemble@^2.2.0
     - resolved-pack: AlifSemiconductor::LVGL_DAVE2D@1.2.0
       selected-by-pack:
         - AlifSemiconductor::LVGL_DAVE2D@1.2.0

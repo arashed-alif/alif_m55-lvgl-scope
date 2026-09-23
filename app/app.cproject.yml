@@ -42,6 +42,8 @@ project:
 
   layers:
     - layer: $BoardLayer$
+    - layer: $DriverLayer$
+    - layer: $StdioLayer$
 
   components:
     # needed for Alif Ensemble support
@@ -59,7 +61,6 @@ project:
     - component: AlifSemiconductor::BSP:External peripherals:GT911 Touch Controller
     - component: AlifSemiconductor::BSP:External peripherals:ILI9806E LCD panel
     - component: AlifSemiconductor::CMSIS Driver:I2C
-    - component: AlifSemiconductor::CMSIS Driver:USART
     - component: AlifSemiconductor::Device:SOC Peripherals:CDC
     - component: AlifSemiconductor::Device:SOC Peripherals:GPIO
     - component: AlifSemiconductor::Device:SOC Peripherals:I3C
