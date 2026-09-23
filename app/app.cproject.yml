@@ -7,12 +7,26 @@ project:
         - file: cpu_usage.c
         - file: board_utils.c
         - file: lv_port/lv_port_disp.c
+        - file: drv_ina228_i3c.c
+        - file: drv_ina228.h
+        - file: sample_ring.c
+        - file: sample_ring.h
+        - file: sensor_task.c
+        - file: sensor_task.h
+        - file: settings.c
+        - file: settings.h
+        # - file: demo_gt911.c
 
-    - group: Board
+    - group: UI
       files:
-        - file: ../libs/common_app_utils/logging/uart_tracelib.c
-        - file: ../libs/common_app_utils/logging/retarget.c
-        - file: ../libs/common_app_utils/fault_handler/fault_handler.c
+        - file: ui/ui.c
+        - file: ui/ui.h
+        - file: ui/ui_style.c
+        - file: ui/ui_style.h
+        - file: ui/ui_scope.c
+        - file: ui/ui_scope.h
+        - file: ui/ui_settings.c
+        - file: ui/ui_settings.h
 
   output:
     base-name: $Project$
@@ -23,9 +37,7 @@ project:
   add-path:
     - .
     - lv_port
-    - ../libs/common_app_utils/logging
-    - ../libs/common_app_utils/fault_handler
-    - ../libs/common_app_utils/profiling
+    - ui
 
   layers:
     - layer: $BoardLayer$
@@ -43,28 +55,31 @@ project:
     - component: ARM::RTOS&FreeRTOS:Timers
 
     # peripheral drivers & middleware
+    - component: AlifSemiconductor::BSP:External peripherals:GT911 Touch Controller
+    - component: AlifSemiconductor::BSP:External peripherals:ILI9806E LCD panel
+    - component: AlifSemiconductor::CMSIS Driver:I2C
+    - component: AlifSemiconductor::CMSIS Driver:USART
     - component: AlifSemiconductor::Device:SOC Peripherals:CDC
     - component: AlifSemiconductor::Device:SOC Peripherals:GPIO
+    - component: AlifSemiconductor::Device:SOC Peripherals:I3C
     - component: AlifSemiconductor::Device:SOC Peripherals:MHU
     - component: AlifSemiconductor::Device:SOC Peripherals:MIPI DSI CSI2 DPHY
     - component: AlifSemiconductor::Device:SOC Peripherals:MIPI DSI
     - component: AlifSemiconductor::Device:SOC Peripherals:PINCONF
-    - component: AlifSemiconductor::CMSIS Driver:USART
     - component: AlifSemiconductor::Services:Secure Enclave:Initialization Helper&Source
     - component: AlifSemiconductor::Services:Secure Enclave:core&Source
-    - component: AlifSemiconductor::BSP:External peripherals:ILI9806E LCD panel
 
-    # LVGL v9.1
+    # LVGL v9.5
     - component: LVGL::LVGL&LVGL9:Essential
     - component: LVGL::LVGL&LVGL9:OS Abstraction Layer&FreeRTOS
+    # Widgets demo kept for touch bring-up (lv_demo_widgets); benchmark removed
     - component: LVGL::LVGL&LVGL9:Demos:Assets
     - component: LVGL::LVGL&LVGL9:Demos:Widgets
-    - component: LVGL::LVGL&LVGL9:Demos:Benchmark
 
     # D/AVE2D driver
-    - component: AlifSemiconductor::Graphics:DAVE2D:Layer2
-    - component: AlifSemiconductor::Graphics:DAVE2D:Layer1
-    - component: AlifSemiconductor::Graphics:DAVE2D:Layer0Lib
+    # - component: AlifSemiconductor::Graphics:DAVE2D:Layer2
+    # - component: AlifSemiconductor::Graphics:DAVE2D:Layer1
+    # - component: AlifSemiconductor::Graphics:DAVE2D:Layer0Lib
 
     # LVGL D/AVE2D support
-    - component: AlifSemiconductor::Graphics:Acceleration:GPU AlifSemi-Dave2D
+    # - component: AlifSemiconductor::Graphics:Acceleration:GPU AlifSemi-Dave2D

@@ -7,23 +7,23 @@
  * contact@alifsemi.com, or visit: https://alifsemi.com/license
  *
  */
-#include "RTE_Components.h"
-#include CMSIS_device_header
+#include <stdio.h>
 
-#include "Driver_IO.h"
+#include <alif.h>
+#include <RTE_Components.h>
+
 #include "se_services_port.h"
 #include "board_config.h"
 #include "board_utils.h"
 
 #include "lv_port_disp.h"
-#include "demos/benchmark/lv_demo_benchmark.h"
+#include "sensor_task.h"
+#include "settings.h"
+#include "ui.h"
 
-// Check if UART trace is disabled
-#if !defined(DISABLE_UART_TRACE)
-#include <stdio.h>
-#include "uart_tracelib.h"
-#else
-#define printf(fmt, ...) (0)
+#if defined(RTE_CMSIS_Compiler_STDIN) || defined(RTE_CMSIS_Compiler_STDOUT)
+#include "retarget_init.h"
+#include "retarget_config.h"
 #endif
 
 // LVGL tick timer period
@@ -43,9 +43,10 @@ TaskHandle_t lvgl_task_handle = NULL;
 
 void clock_init()
 {
+    uint32_t error_code = 0;
     uint32_t service_error_code = 0;
-    /* Enable Clocks */
-    uint32_t error_code = SERVICES_clocks_enable_clock(se_services_s_handle, CLKEN_CLK_100M, true, &service_error_code);
+
+    error_code = SERVICES_clocks_enable_clock(se_services_s_handle, CLKEN_CLK_100M, true, &service_error_code);
     if(error_code || service_error_code){
         printf("SE: 100MHz clock enable error_code=%u se_error_code=%u\n", error_code, service_error_code);
         return;
@@ -64,31 +65,20 @@ uint32_t set_run_profile()
     uint32_t service_error_code;
     uint32_t err;
 
-    // By default all the needed memories, power domains and gatings are enabled.
-    // Use case can easily change these for more suitable settings extern default_runprof/default_offprof and change only
-    // the needed values and call set_power_run_profile/set_power_off_profile
-#ifdef BALLETTO_DEVICE // Balletto support only PFM
-    default_runprof.dcdc_mode       = DCDC_MODE_PFM_FORCED;
-    // No following memories on E1C/B1: SRAM0_MASK | SRAM1_MASK | SRAM6A_MASK | SRAM6B_MASK | SRAM7_1_MASK | SRAM7_2_MASK | SRAM7_3_MASK | SRAM8_MASK | SRAM9_MASK
-    default_runprof.memory_blocks   = SERAM_MASK | MRAM_MASK | FWRAM_MASK | BACKUP4K_MASK;
-    default_runprof.phy_pwr_gating  = LDO_PHY_MASK;
-    default_runprof.ip_clock_gating = LP_PERIPH_MASK | NPU_HE_MASK;
-#else
     default_runprof.dcdc_mode       = DCDC_MODE_PWM;
-    default_runprof.memory_blocks   = SERAM_MASK | SRAM0_MASK | SRAM1_MASK | MRAM_MASK | FWRAM_MASK | BACKUP4K_MASK;
+    default_runprof.memory_blocks   = SERAM_MASK | SRAM0_MASK | SRAM1_MASK | MRAM_MASK | BACKUP4K_MASK;
     default_runprof.phy_pwr_gating  = LDO_PHY_MASK | MIPI_PLL_DPHY_MASK | MIPI_TX_DPHY_MASK;
-#endif
-    default_runprof.power_domains   = PD_VBAT_AON_MASK | PD_SSE700_AON_MASK | PD_SYST_MASK | PD_SESS_MASK;
+    default_runprof.power_domains   = PD_VBAT_AON_MASK | PD_SSE700_AON_MASK | PD_SYST_MASK | PD_DBSS_MASK;
     default_runprof.dcdc_voltage    = 825;
     default_runprof.aon_clk_src     = CLK_SRC_LFXO;
     default_runprof.run_clk_src     = CLK_SRC_PLL;
     default_runprof.scaled_clk_freq = SCALED_FREQ_XO_HIGH_DIV_38_4_MHZ;
-#if defined(M55_HE) || defined(RTSS_HE)
+#if defined(M55_HE)
     default_runprof.cpu_clk_freq    = CLOCK_FREQUENCY_160MHZ;
-#elif defined(M55_HP) || defined(RTSS_HP)
+#elif defined(M55_HP)
     default_runprof.cpu_clk_freq    = CLOCK_FREQUENCY_400MHZ;
 #endif
-    default_runprof.vdd_ioflex_3V3  = IOFLEX_LEVEL_1V8;
+    default_runprof.vdd_ioflex_3V3  = IOFLEX_LEVEL_3V3;
     return SERVICES_set_run_cfg(se_services_s_handle, &default_runprof, &service_error_code);
 }
 
@@ -111,31 +101,29 @@ void lvgl_thread(void *pvParam)
 {
     (void) pvParam;
 
-    // Initialize the SE services
     se_services_port_init();
     clock_init();
 
-    if (set_run_profile()) {
-        printf("Error setting run profile\n");
-        __BKPT();
-    }
+    set_run_profile();
 
     BOARD_LED1_Init();
 
-    // Initialize display
+    // Initialize display (and touch), then build the UI
     lv_port_disp_init();
-    // Launch LVGL benchmark
-    lv_demo_benchmark();
+    ui_init();
 
     while (true) {
         uint32_t ms_till_next_run = lv_timer_handler();
+        // Clamp to 1..10 ms so the chart timer never starves
+        if (ms_till_next_run < 1) ms_till_next_run = 1;
+        if (ms_till_next_run > 10) ms_till_next_run = 10;
         #if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
         const TickType_t xDelay = ms_till_next_run/portTICK_PERIOD_MS;
         vTaskDelay(xDelay);
         #else
         sys_busy_loop_us(ms_till_next_run*1000);
         #endif
-        BOARD_LED1_Control(BOARD_LED_STATE_TOGGLE);
+        // BOARD_LED1_Control(BOARD_LED_STATE_TOGGLE);
     }
 }
 
@@ -146,12 +134,28 @@ int main (void)
     board_pins_config();
     board_gpios_config();
 
-#if !defined(DISABLE_UART_TRACE)
-    tracelib_init(NULL, NULL);
+#if defined(RTE_CMSIS_Compiler_STDIN_Custom)
+    stdin_init();
+#endif
+#if defined(RTE_CMSIS_Compiler_STDOUT_Custom)
+    stdout_init();
 #endif
 
 #if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
-    // Create application main thread
+    settings_init();
+
+    // Sensor task: high priority so sampling is not disturbed by rendering
+    const sensor_task_config_t sensor_config = {
+        SENSOR_TASK_DEFAULT_PERIOD_MS,
+        tskIDLE_PRIORITY + 3U
+    };
+    if (!sensor_task_start(INA228_I2C_ADDR, &sensor_config)) {
+        __BKPT();
+    }
+#endif
+
+#if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
+    // Create application main thread (2048 words = 8 KB stack)
     if (xTaskCreate(lvgl_thread, "LVGL", 2048, NULL,
                     tskIDLE_PRIORITY+1, &lvgl_task_handle) != pdPASS) {
         vTaskDelete(lvgl_task_handle);

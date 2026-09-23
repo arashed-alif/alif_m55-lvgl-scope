@@ -1,0 +1,50 @@
+#ifndef UI_STYLE_H
+#define UI_STYLE_H
+
+#include <stdint.h>
+
+#include "lvgl.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define UI_COLOR_BG        0x0F141AU
+#define UI_COLOR_PANEL     0x18222BU
+#define UI_COLOR_PANEL_ALT 0x1F2C36U
+#define UI_COLOR_CHART_BG  0x0A0F14U
+#define UI_COLOR_GRID      0x223038U
+#define UI_COLOR_BORDER    0x2E3E48U
+#define UI_COLOR_TEXT      0xE8EEF2U
+#define UI_COLOR_TEXT_DIM  0x8FA3AEU
+#define UI_COLOR_ACCENT    0xF2B134U
+#define UI_COLOR_RUN       0x62C370U
+#define UI_COLOR_HOLD      0xE8873AU
+#define UI_COLOR_CURSOR    0x5EC8F2U
+#define UI_COLOR_ERROR     0xE05A5AU
+
+#define UI_FONT_SMALL   (&lv_font_montserrat_14)
+#define UI_FONT_BODY    (&lv_font_montserrat_16)
+#define UI_FONT_TITLE   (&lv_font_montserrat_20)
+#define UI_FONT_READOUT (&lv_font_montserrat_28)
+
+extern lv_style_t ui_style_screen;
+extern lv_style_t ui_style_panel;
+extern lv_style_t ui_style_button;
+extern lv_style_t ui_style_button_checked;
+
+void ui_style_init(void);
+
+/* Flat, borderless container with the panel colour. */
+lv_obj_t *ui_style_create_panel(lv_obj_t *parent);
+lv_obj_t *ui_style_create_label(lv_obj_t *parent, const char *text,
+                                const lv_font_t *font, uint32_t color_hex);
+/* Button with a centred text label; returns the button, label via out param. */
+lv_obj_t *ui_style_create_button(lv_obj_t *parent, const char *text,
+                                 lv_obj_t **label_out);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

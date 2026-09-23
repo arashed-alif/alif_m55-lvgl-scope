@@ -14,6 +14,7 @@
 #include CMSIS_device_header
 #include <RTE_Device.h>
 #include "Driver_CDC200.h" // Display driver
+#include "Driver_Touch_Screen.h"
 #include "sys_utils.h"     // ENABLE, DISABLE macros
 
 #if LV_USE_DRAW_DAVE2D
@@ -88,11 +89,15 @@ static void disp_flush_wait(lv_display_t * disp);
 
 static void disp_callback(uint32_t event);
 
+static void touch_init(void);
+
+static void touch_read(lv_indev_t * indev, lv_indev_data_t * data);
+
 /**********************
  *  STATIC VARIABLES
  **********************/
 
- #if LV_USE_DRAW_DAVE2D
+#if LV_USE_DRAW_DAVE2D
 #if (D1_MEM_ALLOC == D1_MALLOC_D0LIB)
 static uint8_t __attribute__((section(".bss.at_sram1"))) d0_heap[D1_HEAP_SIZE];
 #endif
@@ -106,7 +111,11 @@ static Pixel lcd_buffer_2[MY_DISP_VER_RES][MY_DISP_HOR_RES]
 extern ARM_DRIVER_CDC200 Driver_CDC200;
 static ARM_DRIVER_CDC200 *CDCdrv = &Driver_CDC200;
 
+extern ARM_DRIVER_TOUCH_SCREEN GT911;
+static ARM_DRIVER_TOUCH_SCREEN *Touchdrv = &GT911;
+
 static volatile bool disp_flush_enabled = true;
+static ARM_TOUCH_STATE touch_state;
 
 #if defined(USE_EVT_GROUP)
 static EventGroupHandle_t dispEventGroupHandle = NULL;
@@ -131,16 +140,11 @@ void lv_port_disp_init(void)
     #endif
 
     /*-------------------------
-     * Initialize your display
+     * Initialize your display & touch panel
      * -----------------------*/
     disp_init();
 
-#if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
-    /*-------------------------
-     * Set display interrupt priority to FreeRTOS kernel level
-     * -----------------------*/
-    NVIC_SetPriority(CDC_SCANLINE0_IRQ_IRQn, configKERNEL_INTERRUPT_PRIORITY);
-#endif
+    touch_init();
 
 #if LV_USE_DRAW_DAVE2D
 #if (D1_MEM_ALLOC == D1_MALLOC_D0LIB)
@@ -163,6 +167,10 @@ void lv_port_disp_init(void)
     lv_display_t * disp = lv_display_create(MY_DISP_HOR_RES, MY_DISP_VER_RES);
     lv_display_set_flush_cb(disp, disp_flush);
     lv_display_set_flush_wait_cb(disp, disp_flush_wait);
+
+    lv_indev_t * touch = lv_indev_create();
+    lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch, touch_read);
 
     /* Two buffers screen sized buffer for double buffering.
      * Both LV_DISPLAY_RENDER_MODE_DIRECT and LV_DISPLAY_RENDER_MODE_FULL works, see their comments*/
@@ -210,10 +218,34 @@ static void disp_init(void)
         return;
     }
 
+#if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
+    /*-------------------------
+     * Set display interrupt priority to FreeRTOS kernel level
+     * -----------------------*/
+    NVIC_SetPriority(CDC_SCANLINE0_IRQ_IRQn, configKERNEL_INTERRUPT_PRIORITY);
+#endif
+
     /* Start CDC */
     ret = CDCdrv->Start();
     if(ret != ARM_DRIVER_OK){
         printf("\r\n Error: CDC Start failed\n");
+        __BKPT(0);
+        return;
+    }
+}
+
+static void touch_init(void)
+{
+    int ret = Touchdrv->Initialize();
+    if(ret != ARM_DRIVER_OK){
+        printf("\r\n Error: Touch init failed\n");
+        __BKPT(0);
+        return;
+    }
+
+    ret = Touchdrv->PowerControl(ARM_POWER_FULL);
+    if(ret != ARM_DRIVER_OK){
+        printf("\r\n Error: Touch Power up failed\n");
         __BKPT(0);
         return;
     }
@@ -257,13 +289,14 @@ static void disp_flush(lv_display_t * disp_drv, const lv_area_t * area, uint8_t 
     }
 }
 
-/* Display buffer flush waiting callback
- */
+/* Display buffer flush waiting callback */
 static void disp_flush_wait(lv_display_t * disp)
 {
+    (void)disp;
+
 #if defined(USE_EVT_GROUP)
     xEventGroupWaitBits(dispEventGroupHandle, EVENT_DISP_BUFFER_READY,
-                        pdFALSE, pdFALSE, (100/portTICK_PERIOD_MS));
+                        pdFALSE, pdFALSE, portMAX_DELAY);
 
 #else
     while (!disp_buf_ready) {
@@ -272,8 +305,23 @@ static void disp_flush_wait(lv_display_t * disp)
 #endif
 }
 
-/* Display event handler
- */
+/* Read the latest touch state and expose the first contact to LVGL. */
+static void touch_read(lv_indev_t * indev, lv_indev_data_t * data)
+{
+    (void) indev;
+
+    if (Touchdrv->GetState(&touch_state) != ARM_DRIVER_OK ||
+        touch_state.numtouches == 0) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    data->point.x = touch_state.coordinates[0].x;
+    data->point.y = touch_state.coordinates[0].y;
+    data->state = LV_INDEV_STATE_PRESSED;
+}
+
+/* Display event handler */
 static void disp_callback(uint32_t event)
 {
     if (event & ARM_CDC_SCANLINE0_EVENT) {

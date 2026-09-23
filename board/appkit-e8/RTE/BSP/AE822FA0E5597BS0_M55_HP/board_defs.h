@@ -292,7 +292,7 @@
 // <i> Make sure this setting corresponds to the VDD_IO_FLEX pin voltage. If the VDD_IO_FLEX pin is
 // connected to a 3.3 V supply, do not change the value of the GPIO_CNTL register to command 1.8-V
 // operation mode!
-#define FLEX_IO_VOLTAGE_1V8                             1
+#define FLEX_IO_VOLTAGE_1V8                             0
 
 // <o> "SD_RESET" GPIO port number <0=> GPIO0 <1=> GPIO1 <2=> GPIO2 <3=> GPIO3 <4=> GPIO4 <5=> GPIO5
 // <6=> GPIO6 <7=> GPIO7 <8=> GPIO8 <9=> GPIO9 <10=> GPIO10 <11=> GPIO11 <12=> GPIO12 <13=> GPIO13
@@ -564,9 +564,11 @@
 // GPIO5 <6=> GPIO6 <7=> GPIO7 <8=> GPIO8 <9=> GPIO9 <10=> GPIO10 <11=> GPIO11 <12=> GPIO12 <13=>
 // GPIO13 <14=> GPIO14 <15=> LPGPIO
 #define BOARD_LCD_BACKLIGHT_GPIO_PORT                   6
+#define BOARD_LCD_BL_LED_GPIO_PORT                      6
 // <o> "LCD_BACKLIGHT" GPIO pin number <0=> PIN0 <1=> PIN1 <2=> PIN2 <3=> PIN3 <4=> PIN4 <5=> PIN5
 // <6=> PIN6 <7=> PIN7
 #define BOARD_LCD_BACKLIGHT_GPIO_PIN                    1
+#define BOARD_LCD_BL_LED_GPIO_PIN                       1
 
 // <o> "CAN_RXD" GPIO port number <0=> GPIO0 <1=> GPIO1 <2=> GPIO2 <3=> GPIO3 <4=> GPIO4 <5=> GPIO5
 // <6=> GPIO6 <7=> GPIO7 <8=> GPIO8 <9=> GPIO9 <10=> GPIO10 <11=> GPIO11 <12=> GPIO12 <13=> GPIO13
