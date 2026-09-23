@@ -16,7 +16,7 @@
 #include "board_config.h"
 #include "board_utils.h"
 
-#include "lv_port_disp.h"
+#include "port_disp.h"
 #include "sensor_task.h"
 #include "settings.h"
 #include "ui.h"
@@ -109,7 +109,7 @@ void lvgl_thread(void *pvParam)
     BOARD_LED1_Init();
 
     // Initialize display (and touch), then build the UI
-    lv_port_disp_init();
+    port_disp_init();
     ui_init();
 
     while (true) {

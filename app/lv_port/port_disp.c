@@ -6,7 +6,7 @@
 /*********************
  *      INCLUDES
  *********************/
-#include "lv_port_disp.h"
+#include "port_disp.h"
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -132,7 +132,7 @@ static volatile bool disp_buf_changed = false;
  *   GLOBAL FUNCTIONS
  **********************/
 
-void lv_port_disp_init(void)
+void port_disp_init(void)
 {
     #if defined(USE_EVT_GROUP)
     // Create event group to sync display states
