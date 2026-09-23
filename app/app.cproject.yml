@@ -6,7 +6,8 @@ project:
         - file: main.c
         - file: cpu_usage.c
         - file: board_utils.c
-        - file: lv_port/lv_port_disp.c
+        - file: lv_port/port_disp.c
+        - file: lv_port/port_disp.h
         - file: drv_ina228_i3c.c
         - file: drv_ina228.h
         - file: sample_ring.c
