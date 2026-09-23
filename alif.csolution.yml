@@ -19,6 +19,9 @@ solution:
     - pack: AlifSemiconductor::LVGL_DAVE2D@1.2.0
     - pack: LVGL::lvgl@9.5.0
 
+  variables:
+    - DriverLayer: $SolutionDir()$/libs/soc/soc.clayer.yml
+
   target-types:
     # - type: DevKit-E7-HE
     #   device: Alif Semiconductor::AE722F80F55D5LS:M55_HE
