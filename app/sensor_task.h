@@ -27,6 +27,8 @@ typedef struct {
 
 bool sensor_task_start(uint8_t dev_addr, const sensor_task_config_t *config);
 sample_ring_t *sensor_task_samples(void);
+/* Current time on the clock that stamps sample_t.t_ms. */
+uint32_t sensor_task_now_ms(void);
 void sensor_task_get_stats(sensor_stats_t *out);
 uint32_t sensor_task_error_count(void);
 

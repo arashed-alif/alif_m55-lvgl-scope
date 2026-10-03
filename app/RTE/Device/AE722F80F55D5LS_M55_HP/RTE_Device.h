@@ -1291,7 +1291,7 @@
 //     <5=> 5
 // <i> defines select active touch points
 // <i> default: 5
-#define RTE_ACTIVE_TOUCH_POINTS               5
+#define RTE_ACTIVE_TOUCH_POINTS               1
 
 // <o> RTE_GT911_TOUCH_I2C_SLAVE_ADDRESS_SEL
 // <i> Defines GT911 Touchscreen i2c slave address selection

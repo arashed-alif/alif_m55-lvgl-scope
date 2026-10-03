@@ -56,18 +56,43 @@ bool sample_ring_get(const sample_ring_t *ring, uint32_t seq, sample_t *sample)
     return true;
 }
 
+uint32_t sample_ring_seek(const sample_ring_t *ring, uint32_t head, uint32_t t_ms)
+{
+    uint32_t lo = ring_load(&ring->tail);
+    uint32_t hi = head;
+
+    /* Invariant: everything before lo is older than t_ms, nothing from hi on
+     * is. Signed differences keep the comparison valid across clock wrap. */
+    while (lo != hi) {
+        uint32_t mid = lo + (hi - lo) / 2U;
+
+        if ((int32_t)(ring->samples[mid & SAMPLE_RING_INDEX_MASK].t_ms - t_ms) < 0) {
+            lo = mid + 1U;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
 void sample_ring_consume(sample_ring_t *ring, uint32_t new_tail)
 {
     uint32_t head = ring_load(&ring->head);
     uint32_t tail = ring_load(&ring->tail);
+    uint32_t advance = new_tail - tail;
 
-    /* Only move forward, and never past head. */
-    if ((new_tail - tail) > (head - tail)) {
+    /* Only move forward: a new_tail behind tail (the consumer now wants to
+     * retain more than is left) wraps to a huge advance and would otherwise
+     * consume everything. Distances are bounded by the capacity, so the
+     * signed test is safe. */
+    if ((int32_t)advance <= 0) {
+        return;
+    }
+    /* Never past head. */
+    if (advance > (head - tail)) {
         new_tail = head;
     }
-    if (new_tail != tail) {
-        ring_store(&ring->tail, new_tail);
-    }
+    ring_store(&ring->tail, new_tail);
 }
 
 bool sample_ring_pop(sample_ring_t *ring, sample_t *sample)

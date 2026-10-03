@@ -6,24 +6,37 @@
 #include "semphr.h"
 #include "task.h"
 
+#include "drv_bkram.h"
 #include "sample_ring.h"
 
-const uint16_t settings_window_options_s[SETTINGS_WINDOW_COUNT] = {1U, 2U, 5U, 10U, 30U, 60U};
-const uint16_t settings_rate_options_hz[SETTINGS_RATE_COUNT] = {10U, 50U, 100U, 200U, 500U};
-const uint8_t settings_refresh_options_hz[SETTINGS_REFRESH_COUNT] = {15U, 30U, 60U};
+/* Persistence: one record in the 4 KB backup SRAM, word-addressed through
+ * drv_bkram. Indices 0-7 are claimed in drv_bkram.h, so start well clear.
+ * Fields are stored one per word rather than as a raw settings_t so padding
+ * and enum sizes don't matter; the CRC is written last, so a reset mid-write,
+ * or the random contents after a cold start, just reads back as invalid. */
+#define SETTINGS_BKRAM_BASE (32U)
+#define SETTINGS_MAGIC      (0x50534331U)   /* "PSC1" */
+#define SETTINGS_VERSION    (1U)            /* bump when the fields change */
 
-/* INA228 ADC_CONFIG: MODE[15:12]=0xF (continuous bus+shunt+temp),
- * VBUSCT[11:9], VSHCT[8:6], VTCT[5:3], AVG[2:0].
- *   FAST   : 150 us conversions, no averaging   -> ~0.45 ms per update
- *   NORMAL : 1052 us conversions, 4x averaging  -> ~12.6 ms per update (driver default)
- *   SMOOTH : 1052 us conversions, 16x averaging -> ~50 ms per update
- *   ULTRA  : 4120 us conversions, 16x averaging -> ~200 ms per update */
-const uint16_t settings_filter_adc_config[SETTINGS_FILTER_COUNT] = {
-    0xF000U | (2U << 9) | (2U << 6) | (2U << 3) | 0U,
-    0xF000U | (5U << 9) | (5U << 6) | (5U << 3) | 1U,
-    0xF000U | (5U << 9) | (5U << 6) | (5U << 3) | 2U,
-    0xF000U | (7U << 9) | (7U << 6) | (7U << 3) | 2U
+enum {
+    SETTINGS_W_MAGIC,
+    SETTINGS_W_VERSION,
+    SETTINGS_W_MODE,
+    SETTINGS_W_WINDOW,
+    SETTINGS_W_RATE,
+    SETTINGS_W_Y_AUTO,
+    SETTINGS_W_Y_MIN,
+    SETTINGS_W_Y_MAX,
+    SETTINGS_W_DECIMATION,
+    SETTINGS_W_CRC,
+    SETTINGS_W_COUNT
 };
+
+const uint16_t settings_window_options_s[SETTINGS_WINDOW_COUNT] = {1U, 2U, 5U, 10U, 30U, 60U};
+/* Ascending; sensor_task.c keeps a matching ADC_CONFIG table. The sensor paces
+ * in whole 1 ms ticks, so 333 Hz is a 3 ms period. A 500 Hz rate saved by an
+ * older build snaps to 333 Hz in settings_validate(). */
+const uint16_t settings_rate_options_hz[SETTINGS_RATE_COUNT] = {20U, 100U, 333U};
 
 static SemaphoreHandle_t settings_mutex;
 static settings_t settings_current;
@@ -66,13 +79,11 @@ void settings_defaults(settings_t *out)
     memset(out, 0, sizeof(*out));
     out->mode = SCOPE_MODE_MW;
     out->window_s = 10U;
-    out->sample_rate_hz = 50U;
-    out->refresh_hz = 30U;
+    out->sample_rate_hz = 100U;
     out->y_auto = true;
     out->y_min = 0.0f;
     out->y_max = 1000.0f;
     out->decimation = SCOPE_DECIMATE_MEAN;
-    out->filter = SCOPE_FILTER_NORMAL;
 }
 
 void settings_validate(settings_t *cfg)
@@ -80,12 +91,8 @@ void settings_validate(settings_t *cfg)
     cfg->mode = (cfg->mode == SCOPE_MODE_MA) ? SCOPE_MODE_MA : SCOPE_MODE_MW;
     cfg->window_s = settings_window_options_s[settings_window_index(cfg->window_s)];
     cfg->sample_rate_hz = settings_rate_options_hz[settings_rate_index(cfg->sample_rate_hz)];
-    cfg->refresh_hz = settings_refresh_options_hz[settings_refresh_index(cfg->refresh_hz)];
     if (cfg->decimation != SCOPE_DECIMATE_MAX) {
         cfg->decimation = SCOPE_DECIMATE_MEAN;
-    }
-    if ((uint32_t)cfg->filter >= SETTINGS_FILTER_COUNT) {
-        cfg->filter = SCOPE_FILTER_NORMAL;
     }
     if (!(cfg->y_max > cfg->y_min)) {
         cfg->y_min = 0.0f;
@@ -93,7 +100,8 @@ void settings_validate(settings_t *cfg)
     }
 
     /* The ring must hold one full window plus slack for the UI to lag. */
-    while ((uint32_t)cfg->window_s * cfg->sample_rate_hz > SAMPLE_RING_CAPACITY - 1024U) {
+    while ((uint32_t)cfg->window_s * cfg->sample_rate_hz >
+           SAMPLE_RING_CAPACITY - SAMPLE_RING_HEADROOM) {
         uint32_t idx = settings_window_index(cfg->window_s);
         if (idx == 0U) {
             break;
@@ -122,6 +130,8 @@ void settings_get(settings_t *out)
     settings_unlock(locked);
 }
 
+/* Backup SRAM writes are plain stores with no wear, so every change is saved
+ * at once; there is nothing to debounce. */
 void settings_set(const settings_t *cfg)
 {
     settings_t next = *cfg;
@@ -131,6 +141,7 @@ void settings_set(const settings_t *cfg)
     locked = settings_lock();
     settings_current = next;
     settings_gen++;
+    (void)settings_save(&next);
     settings_unlock(locked);
 }
 
@@ -156,34 +167,83 @@ uint32_t settings_rate_index(uint16_t rate_hz)
     return nearest_u16(settings_rate_options_hz, SETTINGS_RATE_COUNT, rate_hz);
 }
 
-uint32_t settings_refresh_index(uint8_t refresh_hz)
+/* CRC-32 (IEEE, reflected) over whole words, least significant byte first. */
+static uint32_t settings_crc(const uint32_t *words, uint32_t count)
 {
-    uint32_t best = 0U;
-    uint32_t best_diff = UINT32_MAX;
+    uint32_t crc = 0xFFFFFFFFU;
 
-    for (uint32_t i = 0U; i < SETTINGS_REFRESH_COUNT; i++) {
-        uint32_t opt = settings_refresh_options_hz[i];
-        uint32_t diff = (opt > refresh_hz) ? (opt - refresh_hz) : (refresh_hz - opt);
-        if (diff < best_diff) {
-            best_diff = diff;
-            best = i;
+    for (uint32_t i = 0U; i < count; i++) {
+        for (uint32_t byte = 0U; byte < 4U; byte++) {
+            crc ^= (words[i] >> (8U * byte)) & 0xFFU;
+            for (uint32_t bit = 0U; bit < 8U; bit++) {
+                crc = (crc >> 1) ^ ((crc & 1U) ? 0xEDB88320U : 0U);
+            }
         }
     }
-    return best;
+    return ~crc;
 }
 
-/* TODO: persistence. The project has no NVM helper yet. The linker script
- * reserves an MRAM_USER region (.mram_user) and the Ensemble pack ships an
- * MRAM driver; wire settings_load()/settings_save() to it with a
- * magic + version + CRC header. Until then settings live in RAM only. */
+static uint32_t float_bits(float f)
+{
+    uint32_t w;
+    memcpy(&w, &f, sizeof(w));
+    return w;
+}
+
+static float bits_float(uint32_t w)
+{
+    float f;
+    memcpy(&f, &w, sizeof(f));
+    return f;
+}
+
 bool settings_load(settings_t *out)
 {
-    (void)out;
-    return false;
+    uint32_t w[SETTINGS_W_COUNT];
+
+    for (uint32_t i = 0U; i < SETTINGS_W_COUNT; i++) {
+        if (bk_ram_rd(&w[i], SETTINGS_BKRAM_BASE + i) != 0) {
+            return false;
+        }
+    }
+    if (w[SETTINGS_W_MAGIC] != SETTINGS_MAGIC ||
+        w[SETTINGS_W_VERSION] != SETTINGS_VERSION ||
+        w[SETTINGS_W_CRC] != settings_crc(w, SETTINGS_W_CRC)) {
+        return false;
+    }
+
+    /* settings_init() validates, so out-of-range values are clamped there. */
+    memset(out, 0, sizeof(*out));
+    out->mode = (scope_mode_t)w[SETTINGS_W_MODE];
+    out->window_s = (uint16_t)w[SETTINGS_W_WINDOW];
+    out->sample_rate_hz = (uint16_t)w[SETTINGS_W_RATE];
+    out->y_auto = (w[SETTINGS_W_Y_AUTO] != 0U);
+    out->y_min = bits_float(w[SETTINGS_W_Y_MIN]);
+    out->y_max = bits_float(w[SETTINGS_W_Y_MAX]);
+    out->decimation = (scope_decimation_t)w[SETTINGS_W_DECIMATION];
+    return true;
 }
 
 bool settings_save(const settings_t *cfg)
 {
-    (void)cfg;
-    return false;
+    uint32_t w[SETTINGS_W_COUNT];
+
+    w[SETTINGS_W_MAGIC] = SETTINGS_MAGIC;
+    w[SETTINGS_W_VERSION] = SETTINGS_VERSION;
+    w[SETTINGS_W_MODE] = (uint32_t)cfg->mode;
+    w[SETTINGS_W_WINDOW] = cfg->window_s;
+    w[SETTINGS_W_RATE] = cfg->sample_rate_hz;
+    w[SETTINGS_W_Y_AUTO] = cfg->y_auto ? 1U : 0U;
+    w[SETTINGS_W_Y_MIN] = float_bits(cfg->y_min);
+    w[SETTINGS_W_Y_MAX] = float_bits(cfg->y_max);
+    w[SETTINGS_W_DECIMATION] = (uint32_t)cfg->decimation;
+    w[SETTINGS_W_CRC] = settings_crc(w, SETTINGS_W_CRC);
+
+    /* CRC last: until it lands, a reset reads the record back as invalid. */
+    for (uint32_t i = 0U; i < SETTINGS_W_COUNT; i++) {
+        if (bk_ram_wr(&w[i], SETTINGS_BKRAM_BASE + i) != 0) {
+            return false;
+        }
+    }
+    return true;
 }

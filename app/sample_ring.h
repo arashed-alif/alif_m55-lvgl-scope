@@ -4,9 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* 32768 x 16 B = 512 KB. Sized for 60 s at 500 Hz (30000) plus slack. */
+/* 32768 x 16 B = 512 KB. Sized for 60 s at 333 Hz (20000) plus slack. */
 #define SAMPLE_RING_CAPACITY (32768U)
 #define SAMPLE_RING_INDEX_MASK (SAMPLE_RING_CAPACITY - 1U)
+/* Space the consumer always leaves free so the producer can keep pushing while
+ * the UI is between ticks. */
+#define SAMPLE_RING_HEADROOM (1024U)
 
 typedef struct {
     uint32_t t_ms;
@@ -36,6 +39,10 @@ uint32_t sample_ring_head(const sample_ring_t *ring);
 uint32_t sample_ring_tail(const sample_ring_t *ring);
 /* Copy the sample with sequence number `seq`; false if it is outside [tail, head). */
 bool sample_ring_get(const sample_ring_t *ring, uint32_t seq, sample_t *sample);
+/* First sequence number in [tail, head) whose t_ms is at or after t_ms, or head
+ * if there is none. Pass the head the caller is working with. Timestamps never
+ * decrease, so this is a binary search. */
+uint32_t sample_ring_seek(const sample_ring_t *ring, uint32_t head, uint32_t t_ms);
 /* Advance tail so that only [new_tail, head) stays retained. Never moves backwards. */
 void sample_ring_consume(sample_ring_t *ring, uint32_t new_tail);
 /* Classic pop of the oldest retained sample (kept for convenience/tests). */

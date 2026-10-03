@@ -10,6 +10,8 @@
 #include <stdio.h>
 
 #include <alif.h>
+#include <drv_counter.h>
+#include <pm_soc_clk.h>
 #include <RTE_Components.h>
 
 #include "se_services_port.h"
@@ -17,6 +19,7 @@
 #include "board_utils.h"
 
 #include "port_disp.h"
+#include "prof.h"
 #include "sensor_task.h"
 #include "settings.h"
 #include "ui.h"
@@ -59,7 +62,7 @@ void clock_init()
     }
 }
 
-uint32_t set_run_profile()
+uint32_t apply_run_profile()
 {
     run_profile_t default_runprof;
     uint32_t service_error_code;
@@ -101,15 +104,11 @@ void lvgl_thread(void *pvParam)
 {
     (void) pvParam;
 
-    se_services_port_init();
-    clock_init();
-
-    set_run_profile();
-
     BOARD_LED1_Init();
 
     // Initialize display (and touch), then build the UI
     port_disp_init();
+    prof_attach_display();
     ui_init();
 
     while (true) {
@@ -129,10 +128,14 @@ void lvgl_thread(void *pvParam)
 
 int main (void)
 {
-    // System Initialization
-    SystemCoreClockUpdate();
-    board_pins_config();
+    se_services_port_init();
+    apply_run_profile();
+
     board_gpios_config();
+    board_pins_config();
+    pm_core_clk_update();
+    pm_soc_clk_get_busclk();
+    refclk_cntr_init();
 
 #if defined(RTE_CMSIS_Compiler_STDIN_Custom)
     stdin_init();
@@ -141,7 +144,10 @@ int main (void)
     stdout_init();
 #endif
 
+    clock_init();
+
 #if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
+    prof_init();
     settings_init();
 
     // Sensor task: high priority so sampling is not disturbed by rendering

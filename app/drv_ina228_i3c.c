@@ -19,7 +19,7 @@
 /* Task blocked in wait_for_i3c_event(); the I3C ISR notifies it directly. */
 static TaskHandle_t i3c_waiter;
 
-static uint32_t current_lsb = 244;		/* nA per LSB */
+static uint32_t current_lsb = 5198;		/* nA per LSB */
 
 /* CONFIG[4] ADCRANGE, tracked by INA228_WriteCONFIG so that the VSHUNT scaling
  * and the SHUNT_CAL value follow the selected full scale range automatically */

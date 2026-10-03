@@ -13,12 +13,21 @@
 /*====================
  * Layout / tuning
  *====================*/
-#define SCOPE_HEADER_HEIGHT      48
-/* Two footer rows on narrow (portrait) panels, one on wide ones. */
-#define SCOPE_FOOTER_HEIGHT      ((LV_HOR_RES < 640) ? 96 : 52)
+/* Fixed layout for the 480 x 800 portrait panel. */
+#define SCOPE_HEADER_HEIGHT      60
+#define SCOPE_FOOTER_HEIGHT      100    /* two rows */
 #define SCOPE_SCALE_WIDTH        62
 #define SCOPE_MARGIN             6
-#define SCOPE_CHART_MAX_POINTS   800
+/* Room above the chart for the Y unit caption; the top tick label also
+ * straddles the chart's top edge. */
+#define SCOPE_UNIT_HEIGHT        28
+#define SCOPE_SCALE_MAJOR_LEN    8
+#define SCOPE_SCALE_LABEL_PAD    4
+#define SCOPE_CHART_MAX_POINTS   480    /* at most one per pixel of the panel width */
+/* The chart draws the trace mapped onto 0..SCOPE_CHART_SPAN across the Y range,
+ * so the range can go down to microamps without LVGL's int32 maths (value span
+ * x chart height) overflowing. */
+#define SCOPE_CHART_SPAN         10000
 #define SCOPE_CHART_LINE_WIDTH   2
 #define SCOPE_CHART_HDIV         9      /* 8 horizontal bands */
 #define SCOPE_CHART_VDIV         11     /* 10 vertical bands (s/div) */
@@ -26,17 +35,32 @@
 #define SCOPE_SCALE_TICKS        9
 #define SCOPE_SCALE_MAJOR_EVERY  2
 #define SCOPE_SCALE_LABELS       5
+#define SCOPE_LABEL_INTERVALS    (SCOPE_SCALE_LABELS - 1)  /* 2 grid bands each */
 #define SCOPE_RANGE_HEADROOM     0.10f
-#define SCOPE_RANGE_HYSTERESIS   0.05f
-#define SCOPE_RANGE_DIVISIONS    8
-#define SCOPE_MULT_MA            100    /* chart units per mA */
-#define SCOPE_MULT_MW            10     /* chart units per mW */
-#define SCOPE_CHART_VALUE_LIMIT  1000000000
+/* Smallest auto range, in display units: about four current LSBs (244 nA). */
+#define SCOPE_MIN_SPAN_MA        0.001f     /* 1 uA */
+#define SCOPE_MIN_SPAN_MW        0.01f      /* 10 uW */
+/* Auto range grows at once but only shrinks/shifts after the smaller range has
+ * been possible for max(window, this) so a spike doesn't rescale twice. */
+#define SCOPE_RANGE_SHRINK_MIN_MS 3000U
+/* Scope timer rate. At the default 10 s window a new point lands every ~25 ms,
+ * so 30 Hz keeps up; faster only costs render time. */
+#define SCOPE_REFRESH_HZ         30U
+/* Warn when the achieved sample rate is below this % of configured. Ignore the
+ * measurement for SCOPE_RATE_SETTLE_MS after a rate change (the sensor's 1 s
+ * count straddles the change). */
+#define SCOPE_RATE_LOW_PCT       90U
+#define SCOPE_RATE_SETTLE_MS     2500U
+/* A time bin with no sample repeats the previous point, unless no sample has
+ * arrived for this long: then the sensor has stalled and the trace shows a gap. */
+#define SCOPE_GAP_MS             1000U
+/* History kept in the ring beyond the longest window, so a rebuild covers the
+ * whole window despite timing jitter. */
+#define SCOPE_HISTORY_SLACK_MS   1000U
 #define SCOPE_CURSOR_LABEL_PAD   6
-/* Fixed readout widths so the flex rows don't shift as text length changes. */
-#define SCOPE_MODE_MATRIX_WIDTH  120
-#define SCOPE_RUN_BUTTON_WIDTH   110
-#define SCOPE_LIVE_LABEL_WIDTH   190
+/* Fixed widths so the flex rows don't shift as text length changes. */
+#define SCOPE_MODE_MATRIX_WIDTH  145
+#define SCOPE_RUN_BUTTON_WIDTH   133
 #define SCOPE_DIV_LABEL_WIDTH    110
 #define SCOPE_AVG_LABEL_WIDTH    160
 #define SCOPE_PEAK_LABEL_WIDTH   150
@@ -50,6 +74,13 @@ typedef struct {
     uint32_t count;
 } point_acc_t;
 
+/* A display unit: how many mA (or mW) one of it is, and its name. The fonts
+ * have no micro sign, hence "u". */
+typedef struct {
+    float per_unit;
+    const char *name;
+} scope_unit_t;
+
 typedef struct {
     lv_obj_t *screen;
     lv_obj_t *header;
@@ -57,13 +88,14 @@ typedef struct {
     lv_obj_t *footer;
     lv_obj_t *chart;
     lv_obj_t *scale;
+    lv_obj_t *unit_label;
     lv_obj_t *vbus_label;
-    lv_obj_t *state_label;
     lv_obj_t *drop_label;
-    lv_obj_t *mode_matrix;
+    lv_obj_t *rate_label;
+    lv_obj_t *state_label;
     lv_obj_t *run_button;
     lv_obj_t *run_label;
-    lv_obj_t *live_label;
+    lv_obj_t *mode_matrix;
     lv_obj_t *div_label;
     lv_obj_t *avg_label;
     lv_obj_t *peak_label;
@@ -72,18 +104,36 @@ typedef struct {
     lv_chart_cursor_t *cursor;
     lv_timer_t *timer;
 
-    int32_t points_ma[SCOPE_CHART_MAX_POINTS];
-    int32_t points_mw[SCOPE_CHART_MAX_POINTS];
+    /* One entry per time bin, oldest first. Values are in display units (mA,
+     * mW) as the decimation picks them; NAN marks a bin with nothing to draw. */
+    float points_ma[SCOPE_CHART_MAX_POINTS];
+    float points_mw[SCOPE_CHART_MAX_POINTS];
+    /* Raw sample sums and counts per bin, so the average readout is the mean
+     * of the samples themselves whatever the decimation draws. */
+    float sums_ma[SCOPE_CHART_MAX_POINTS];
+    float sums_mw[SCOPE_CHART_MAX_POINTS];
+    uint32_t counts[SCOPE_CHART_MAX_POINTS];
+    /* The active trace mapped onto the Y range; this is what the chart draws. */
+    int32_t chart_y[SCOPE_CHART_MAX_POINTS];
     uint32_t point_count;
-    uint32_t samples_per_point;     /* k */
-    point_acc_t acc_ma;
+    point_acc_t acc_ma;             /* samples in the bin being filled */
     point_acc_t acc_mw;
+    /* The window is point_count equal time bins. Bin `bin_index` of the current
+     * cycle ends at bin_origin_ms + (bin_index + 1) * window_ms / point_count;
+     * one cycle spans exactly one window, so the origin steps by window_ms. */
+    uint32_t bin_origin_ms;
+    uint32_t bin_index;
+    uint32_t last_sample_ms;        /* for the SCOPE_GAP_MS rule */
+    bool have_last_sample;
+    bool trace_changed;             /* a bin closed since the last redraw */
+    uint16_t shown_window_s;        /* window the trace is built for; lags
+                                     * cfg.window_s while a change waits for RUN */
+    bool geometry_pending;          /* window/rate/decimation changed during HOLD */
+    uint32_t rate_tick;             /* last rate change, for SCOPE_RATE_SETTLE_MS */
 
     uint32_t next_seq;
     bool hold;
     bool have_sample;
-    float live_ma;
-    float live_mw;
     float vbus_v;
     float peak_ma;
     float peak_mw;
@@ -91,6 +141,8 @@ typedef struct {
     bool range_valid;
     float range_lo;
     float range_hi;
+    bool shrink_pending;
+    uint32_t shrink_tick;
     char scale_text[SCOPE_SCALE_LABELS][12];
     const char *scale_src[SCOPE_SCALE_LABELS + 1];
 
@@ -106,43 +158,37 @@ static const char *mode_map[] = {"mA", "mW", ""};
 /*====================
  * Helpers
  *====================*/
-static int32_t mode_mult(scope_mode_t mode)
-{
-    return (mode == SCOPE_MODE_MA) ? SCOPE_MULT_MA : SCOPE_MULT_MW;
-}
-
-static int32_t *active_points(void)
+static float *active_points(void)
 {
     return (s.cfg.mode == SCOPE_MODE_MA) ? s.points_ma : s.points_mw;
 }
 
-static int32_t value_to_chart(float value, scope_mode_t mode)
+/* Micro below 1 milli-unit, the base unit from 1000 up. */
+static scope_unit_t pick_unit(float magnitude, scope_mode_t mode)
 {
-    float scaled = value * (float)mode_mult(mode);
-    if (scaled > (float)SCOPE_CHART_VALUE_LIMIT) {
-        scaled = (float)SCOPE_CHART_VALUE_LIMIT;
-    } else if (scaled < -(float)SCOPE_CHART_VALUE_LIMIT) {
-        scaled = -(float)SCOPE_CHART_VALUE_LIMIT;
+    bool ma = (mode == SCOPE_MODE_MA);
+    scope_unit_t unit;
+
+    if (magnitude < 1.0f) {
+        unit.per_unit = 0.001f;
+        unit.name = ma ? "uA" : "uW";
+    } else if (magnitude < 1000.0f) {
+        unit.per_unit = 1.0f;
+        unit.name = ma ? "mA" : "mW";
+    } else {
+        unit.per_unit = 1000.0f;
+        unit.name = ma ? "A" : "W";
     }
-    return (int32_t)lroundf(scaled);
+    return unit;
 }
 
-static float chart_to_value(int32_t chart_value, scope_mode_t mode)
-{
-    return (float)chart_value / (float)mode_mult(mode);
-}
-
-/* "123.4 mW" / "1.234 W" / "56.7 mA" / "2.345 A" */
+/* "245.3 uA" / "12.34 mA" / "1.234 A" */
 static void format_value(char *buf, size_t len, float value, scope_mode_t mode)
 {
-    const char *milli = (mode == SCOPE_MODE_MA) ? "mA" : "mW";
-    const char *whole = (mode == SCOPE_MODE_MA) ? "A" : "W";
+    scope_unit_t unit = pick_unit(fabsf(value), mode);
+    int decimals = (unit.per_unit < 1.0f) ? 1 : ((unit.per_unit > 1.0f) ? 3 : 2);
 
-    if (fabsf(value) >= 1000.0f) {
-        snprintf(buf, len, "%.3f %s", value / 1000.0f, whole);
-    } else {
-        snprintf(buf, len, "%.1f %s", value, milli);
-    }
+    snprintf(buf, len, "%.*f %s", decimals, (double)(value / unit.per_unit), unit.name);
 }
 
 static void format_div(char *buf, size_t len, uint32_t window_s)
@@ -178,96 +224,108 @@ static float nice_step(float raw)
     return 10.0f * mag;
 }
 
+/* Fewest decimals (up to 3) that print v exactly, allowing for float noise. */
+static int decimals_for(float v)
+{
+    float a = fabsf(v);
+
+    for (int d = 0; d < 3; d++) {
+        float scaled = a * powf(10.0f, (float)d);
+        float tolerance = 1.0e-3f * ((scaled > 1.0f) ? scaled : 1.0f);
+
+        if (fabsf(scaled - roundf(scaled)) <= tolerance) {
+            return d;
+        }
+    }
+    return 3;
+}
+
 /*====================
  * Y range and scale
  *====================*/
-static void apply_range(float lo, float hi, bool force)
+static int32_t to_chart(float v)
 {
-    int32_t lo_i;
-    int32_t hi_i;
+    float span = s.range_hi - s.range_lo;
+    float y;
+
+    if (isnan(v) || !(span > 0.0f)) {
+        return LV_CHART_POINT_NONE;
+    }
+    y = (v - s.range_lo) * (float)SCOPE_CHART_SPAN / span;
+    /* lv_map() clamps to the axis anyway; this only keeps the conversion to
+     * int32 defined for wild outliers. */
+    if (y > 1.0e6f) {
+        y = 1.0e6f;
+    } else if (y < -1.0e6f) {
+        y = -1.0e6f;
+    }
+    return (int32_t)lroundf(y);
+}
+
+static void remap_chart(void)
+{
+    const float *points = active_points();
+
+    for (uint32_t i = 0U; i < s.point_count; i++) {
+        s.chart_y[i] = to_chart(points[i]);
+    }
+}
+
+static float min_span(void)
+{
+    return (s.cfg.mode == SCOPE_MODE_MA) ? SCOPE_MIN_SPAN_MA : SCOPE_MIN_SPAN_MW;
+}
+
+/* Set the Y range (display units), label the scale in a unit that suits its
+ * magnitude, and redraw the trace against it. The caller refreshes the chart. */
+static void apply_range(float lo, float hi)
+{
+    scope_unit_t unit;
     float step;
     int decimals;
 
     if (!(hi > lo)) {
-        hi = lo + 1.0f;
+        hi = lo + min_span();
     }
-
-    if (!force && s.range_valid) {
-        float span = s.range_hi - s.range_lo;
-        if (fabsf(lo - s.range_lo) <= span * SCOPE_RANGE_HYSTERESIS &&
-            fabsf(hi - s.range_hi) <= span * SCOPE_RANGE_HYSTERESIS) {
-            return;
-        }
-    }
-
     s.range_lo = lo;
     s.range_hi = hi;
     s.range_valid = true;
+    remap_chart();
 
-    lo_i = value_to_chart(lo, s.cfg.mode);
-    hi_i = value_to_chart(hi, s.cfg.mode);
-    if (hi_i <= lo_i) {
-        hi_i = lo_i + 1;
+    unit = pick_unit(fmaxf(fabsf(lo), fabsf(hi)), s.cfg.mode);
+    step = (hi - lo) / (float)SCOPE_LABEL_INTERVALS;
+    decimals = decimals_for(step / unit.per_unit);
+    if (decimals_for(lo / unit.per_unit) > decimals) {
+        decimals = decimals_for(lo / unit.per_unit);
     }
-    lv_chart_set_axis_range(s.chart, LV_CHART_AXIS_PRIMARY_Y, lo_i, hi_i);
-    lv_scale_set_range(s.scale, lo_i, hi_i);
-
-    step = (hi - lo) / (float)(SCOPE_SCALE_LABELS - 1);
-    if (step >= 10.0f) {
-        decimals = 0;
-    } else if (step >= 1.0f) {
-        decimals = 1;
-    } else {
-        decimals = 2;
-    }
-
     for (uint32_t i = 0U; i < SCOPE_SCALE_LABELS; i++) {
-        float v = lo + step * (float)i;
-        if (fabsf(v) >= 10000.0f) {
-            snprintf(s.scale_text[i], sizeof(s.scale_text[i]), "%.1fk", v / 1000.0f);
-        } else {
-            snprintf(s.scale_text[i], sizeof(s.scale_text[i]), "%.*f", decimals, v);
+        float v = (lo + step * (float)i) / unit.per_unit;
+
+        if (fabsf(v) < 1.0e-6f) {
+            v = 0.0f;       /* no "-0" */
         }
+        snprintf(s.scale_text[i], sizeof(s.scale_text[i]), "%.*f", decimals, (double)v);
         s.scale_src[i] = s.scale_text[i];
     }
     s.scale_src[SCOPE_SCALE_LABELS] = NULL;
     lv_scale_set_text_src(s.scale, s.scale_src);
     lv_obj_invalidate(s.scale);
+    lv_label_set_text(s.unit_label, unit.name);
 }
 
-static void update_auto_range(void)
+/* Smallest range of SCOPE_LABEL_INTERVALS nice steps that covers the data plus
+ * headroom, with lo on a step boundary so every label is a round number. */
+static void ideal_auto_range(float min_v, float max_v, float *lo_out, float *hi_out,
+                             float *step_out)
 {
-    const int32_t *points = active_points();
-    int32_t min_i = INT32_MAX;
-    int32_t max_i = INT32_MIN;
-    float min_v;
-    float max_v;
-    float span;
-    float step;
+    float span = max_v - min_v;
     float lo;
     float hi;
+    float step;
+    float base;
 
-    for (uint32_t i = 0U; i < s.point_count; i++) {
-        int32_t v = points[i];
-        if (v == LV_CHART_POINT_NONE) {
-            continue;
-        }
-        if (v < min_i) {
-            min_i = v;
-        }
-        if (v > max_i) {
-            max_i = v;
-        }
-    }
-    if (min_i == INT32_MAX) {
-        return;
-    }
-
-    min_v = chart_to_value(min_i, s.cfg.mode);
-    max_v = chart_to_value(max_i, s.cfg.mode);
-    span = max_v - min_v;
-    if (span < 1.0f / (float)mode_mult(s.cfg.mode) * 4.0f) {
-        span = 1.0f / (float)mode_mult(s.cfg.mode) * 4.0f;
+    if (span < min_span()) {
+        span = min_span();
     }
     lo = min_v - span * SCOPE_RANGE_HEADROOM;
     hi = max_v + span * SCOPE_RANGE_HEADROOM;
@@ -276,13 +334,82 @@ static void update_auto_range(void)
         lo = 0.0f;
     }
 
-    step = nice_step((hi - lo) / (float)SCOPE_RANGE_DIVISIONS);
-    lo = floorf(lo / step) * step;
-    hi = ceilf(hi / step) * step;
-    if (hi <= lo) {
-        hi = lo + step;
+    step = nice_step((hi - lo) / (float)SCOPE_LABEL_INTERVALS);
+    base = floorf(lo / step) * step;
+    /* Flooring lo can cost up to one step; the next nice step always fits.
+     * Bounded in case of float surprises. */
+    for (uint32_t i = 0U; i < 4U && base + step * (float)SCOPE_LABEL_INTERVALS < hi; i++) {
+        step = nice_step(step * 1.5f);
+        base = floorf(lo / step) * step;
     }
-    apply_range(lo, hi, false);
+
+    *lo_out = base;
+    *hi_out = base + step * (float)SCOPE_LABEL_INTERVALS;
+    *step_out = step;
+}
+
+/* Returns false when there is no data to range on. */
+static bool update_auto_range(void)
+{
+    const float *points = active_points();
+    float min_v = INFINITY;
+    float max_v = -INFINITY;
+    float step;
+    float lo;
+    float hi;
+    uint32_t hold_ms;
+
+    for (uint32_t i = 0U; i < s.point_count; i++) {
+        float v = points[i];
+        if (isnan(v)) {
+            continue;
+        }
+        if (v < min_v) {
+            min_v = v;
+        }
+        if (v > max_v) {
+            max_v = v;
+        }
+    }
+    if (min_v > max_v) {
+        return false;
+    }
+
+    ideal_auto_range(min_v, max_v, &lo, &hi, &step);
+
+    /* Grow at once: data outside the axis is worse than a rescale. */
+    if (!s.range_valid || min_v < s.range_lo || max_v > s.range_hi) {
+        s.shrink_pending = false;
+        apply_range(lo, hi);
+        return true;
+    }
+    if (fabsf(lo - s.range_lo) <= step * 0.01f && fabsf(hi - s.range_hi) <= step * 0.01f) {
+        s.shrink_pending = false;
+        return true;
+    }
+
+    /* Shrink/shift lazily, once the data has fit the smaller range for a while. */
+    if (!s.shrink_pending) {
+        s.shrink_pending = true;
+        s.shrink_tick = lv_tick_get();
+        return true;
+    }
+    hold_ms = (uint32_t)s.cfg.window_s * 1000U;
+    if (hold_ms < SCOPE_RANGE_SHRINK_MIN_MS) {
+        hold_ms = SCOPE_RANGE_SHRINK_MIN_MS;
+    }
+    if (lv_tick_elaps(s.shrink_tick) >= hold_ms) {
+        s.shrink_pending = false;
+        apply_range(lo, hi);
+    }
+    return true;
+}
+
+/* Until data arrives: a range in the right unit, replaced by the first data. */
+static void apply_default_range(void)
+{
+    apply_range(0.0f, (s.cfg.mode == SCOPE_MODE_MA) ? 100.0f : 1000.0f);
+    s.range_valid = false;
 }
 
 static void refresh_range(bool force)
@@ -290,16 +417,22 @@ static void refresh_range(bool force)
     if (s.cfg.y_auto) {
         if (force) {
             s.range_valid = false;
+            s.shrink_pending = false;
         }
-        update_auto_range();
-    } else {
-        apply_range(s.cfg.y_min, s.cfg.y_max, force);
+        if (!update_auto_range() && force) {
+            apply_default_range();
+        }
+    } else if (force || !s.range_valid) {
+        /* Manual limits only change through settings, which force a refresh. */
+        apply_range(s.cfg.y_min, s.cfg.y_max);
     }
 }
 
 /*====================
  * Data path
  *====================*/
+#define SHIFT_LEFT(arr, n) memmove(&(arr)[0], &(arr)[1], ((n) - 1U) * sizeof((arr)[0]))
+
 static void reset_acc(void)
 {
     memset(&s.acc_ma, 0, sizeof(s.acc_ma));
@@ -311,10 +444,15 @@ static void reset_acc(void)
 static void clear_points(void)
 {
     for (uint32_t i = 0U; i < SCOPE_CHART_MAX_POINTS; i++) {
-        s.points_ma[i] = LV_CHART_POINT_NONE;
-        s.points_mw[i] = LV_CHART_POINT_NONE;
+        s.points_ma[i] = NAN;
+        s.points_mw[i] = NAN;
+        s.sums_ma[i] = 0.0f;
+        s.sums_mw[i] = 0.0f;
+        s.counts[i] = 0U;
+        s.chart_y[i] = LV_CHART_POINT_NONE;
     }
     reset_acc();
+    s.have_last_sample = false;
 }
 
 static void reset_peak(void)
@@ -340,24 +478,102 @@ static float acc_result(const point_acc_t *acc)
     return acc->sum / (float)acc->count;
 }
 
-static void emit_point(void)
+/* Span of the trace on screen: bins and cursor times follow what is displayed,
+ * which during HOLD may not be the latest setting yet. */
+static uint32_t window_ms(void)
+{
+    return (uint32_t)s.shown_window_s * 1000U;
+}
+
+/* Ring history to keep: the longest selectable window plus slack. */
+static uint32_t history_ms(void)
+{
+    return (uint32_t)settings_window_options_s[SETTINGS_WINDOW_COUNT - 1U] * 1000U +
+           SCOPE_HISTORY_SLACK_MS;
+}
+
+/* Samples one window holds at the configured rate. */
+static uint32_t window_samples(void)
+{
+    return (uint32_t)s.cfg.window_s * s.cfg.sample_rate_hz;
+}
+
+/* (bin_index + 1) * window_ms stays below 480 * 60000, well inside 32 bits. */
+static uint32_t bin_end_ms(void)
+{
+    return s.bin_origin_ms + ((s.bin_index + 1U) * window_ms()) / s.point_count;
+}
+
+static void start_timeline(uint32_t start_ms)
+{
+    s.bin_origin_ms = start_ms;
+    s.bin_index = 0U;
+}
+
+/* Append the bin being filled to the trace. An empty bin repeats the previous
+ * point over a short dropout and becomes a gap once the sensor has been
+ * silent for SCOPE_GAP_MS; either way it adds nothing to the average. */
+static void close_bin(uint32_t end_ms)
 {
     uint32_t n = s.point_count;
+    uint32_t last = n - 1U;
+    float ma = NAN;
+    float mw = NAN;
 
-    if (n == 0U) {
+    if (s.acc_ma.count > 0U) {
+        ma = acc_result(&s.acc_ma);
+        mw = acc_result(&s.acc_mw);
+    } else if (s.have_last_sample && (end_ms - s.last_sample_ms) <= SCOPE_GAP_MS) {
+        ma = s.points_ma[last];
+        mw = s.points_mw[last];
+    }
+    SHIFT_LEFT(s.points_ma, n);
+    SHIFT_LEFT(s.points_mw, n);
+    SHIFT_LEFT(s.sums_ma, n);
+    SHIFT_LEFT(s.sums_mw, n);
+    SHIFT_LEFT(s.counts, n);
+    SHIFT_LEFT(s.chart_y, n);
+    s.points_ma[last] = ma;
+    s.points_mw[last] = mw;
+    s.sums_ma[last] = s.acc_ma.sum;
+    s.sums_mw[last] = s.acc_mw.sum;
+    s.counts[last] = s.acc_ma.count;
+    s.chart_y[last] = to_chart((s.cfg.mode == SCOPE_MODE_MA) ? ma : mw);
+    reset_acc();
+    s.trace_changed = true;
+}
+
+/* Close every bin that ends at or before t_ms. All comparisons are signed
+ * differences so they survive the ms clock wrapping. */
+static void advance_to(uint32_t t_ms)
+{
+    uint32_t end = bin_end_ms();
+
+    /* More than a window behind (the LVGL task stalled with no samples to
+     * rebuild from): nothing on screen is current, so start over at t_ms. */
+    if ((int32_t)(t_ms - end) >= (int32_t)window_ms()) {
+        clear_points();
+        start_timeline(t_ms);
+        s.trace_changed = true;
         return;
     }
-    memmove(&s.points_ma[0], &s.points_ma[1], (n - 1U) * sizeof(int32_t));
-    memmove(&s.points_mw[0], &s.points_mw[1], (n - 1U) * sizeof(int32_t));
-    s.points_ma[n - 1U] = value_to_chart(acc_result(&s.acc_ma), SCOPE_MODE_MA);
-    s.points_mw[n - 1U] = value_to_chart(acc_result(&s.acc_mw), SCOPE_MODE_MW);
-    reset_acc();
+    while ((int32_t)(t_ms - end) >= 0) {
+        close_bin(end);
+        s.bin_index++;
+        if (s.bin_index == s.point_count) {
+            s.bin_index = 0U;
+            s.bin_origin_ms += window_ms();
+        }
+        end = bin_end_ms();
+    }
 }
 
 static void process_sample(const sample_t *sample)
 {
-    s.live_ma = sample->current_ma;
-    s.live_mw = sample->power_mw;
+    /* Place by timestamp, not by count, so rate changes and a sensor that
+     * can't keep up still land on the right part of the time axis. */
+    advance_to(sample->t_ms);
+
     s.vbus_v = sample->vbus_v;
     s.have_sample = true;
     if (sample->current_ma > s.peak_ma) {
@@ -369,57 +585,62 @@ static void process_sample(const sample_t *sample)
 
     acc_add(&s.acc_ma, sample->current_ma);
     acc_add(&s.acc_mw, sample->power_mw);
-    if (s.acc_ma.count >= s.samples_per_point) {
-        emit_point();
-    }
+    s.last_sample_ms = sample->t_ms;
+    s.have_last_sample = true;
 }
 
-static uint32_t window_samples(void)
-{
-    return s.point_count * s.samples_per_point;
-}
-
-/* Rebuild the whole trace from ring history so the display shows "now". */
+/* Rebuild the whole trace from ring history so the display shows the window
+ * ending now. Read the clock before head: a sample stamped after `now` is also
+ * pushed after it (the sensor task stamps and pushes without blocking), so
+ * closing bins up to `now` never closes one a later sample belongs in. */
 static void rebuild_from_ring(void)
 {
     sample_ring_t *ring = sensor_task_samples();
+    uint32_t now = sensor_task_now_ms();
     uint32_t head = sample_ring_head(ring);
-    uint32_t tail = sample_ring_tail(ring);
-    uint32_t available = head - tail;
-    uint32_t want = window_samples();
-    uint32_t start = head - ((available < want) ? available : want);
+    uint32_t start_ms = now - window_ms();
     sample_t sample;
 
     clear_points();
-    for (uint32_t seq = start; seq != head; seq++) {
+    start_timeline(start_ms);
+    for (uint32_t seq = sample_ring_seek(ring, head, start_ms); seq != head; seq++) {
         if (sample_ring_get(ring, seq, &sample)) {
             process_sample(&sample);
         }
     }
+    advance_to(now);
     s.next_seq = head;
 }
 
-/* Derive point count / decimation from settings and the chart width. */
+/* One point per chart pixel whatever the rate and window. With at least as
+ * many points as pixels LVGL draws the trace as vertical runs (plain fills);
+ * with fewer it switches to anti-aliased skewed segments, which made 20 Hz and
+ * short windows render several times slower. Bins that get no sample repeat
+ * the previous point (close_bin), so sparse data draws as sample-and-hold steps. */
 static void configure_geometry(void)
 {
     uint32_t chart_px = (uint32_t)lv_obj_get_content_width(s.chart);
-    uint32_t max_points = (chart_px == 0U || chart_px > SCOPE_CHART_MAX_POINTS)
-                          ? SCOPE_CHART_MAX_POINTS : chart_px;
-    uint32_t ws = (uint32_t)s.cfg.window_s * s.cfg.sample_rate_hz;
-    uint32_t k = (ws + max_points - 1U) / max_points;
+    uint32_t n = (chart_px == 0U || chart_px > SCOPE_CHART_MAX_POINTS)
+                 ? SCOPE_CHART_MAX_POINTS : chart_px;
 
-    if (k == 0U) {
-        k = 1U;
+    if (n < 2U) {
+        n = 2U;     /* a line needs two points; also keeps bin_end_ms() defined */
     }
-    s.samples_per_point = k;
-    s.point_count = ws / k;
-    if (s.point_count == 0U) {
-        s.point_count = 1U;
-    }
-    if (s.point_count > max_points) {
-        s.point_count = max_points;
-    }
-    lv_chart_set_point_count(s.chart, s.point_count);
+    s.point_count = n;
+    s.shown_window_s = s.cfg.window_s;
+    lv_chart_set_point_count(s.chart, n);
+}
+
+/* Size the trace for the current settings, with the matching s/div label. The
+ * caller rebuilds the trace afterwards. */
+static void apply_geometry(void)
+{
+    char buf[24];
+
+    configure_geometry();
+    reset_peak();
+    format_div(buf, sizeof(buf), s.shown_window_s);
+    lv_label_set_text(s.div_label, buf);
 }
 
 static void update_labels(void);
@@ -433,22 +654,26 @@ static void apply_settings(const settings_t *old)
     bool range_changed = (old->y_auto != s.cfg.y_auto) ||
                          (old->y_min != s.cfg.y_min) ||
                          (old->y_max != s.cfg.y_max);
-    char buf[24];
 
-    lv_timer_set_period(s.timer, 1000U / s.cfg.refresh_hz);
+    if (old->sample_rate_hz != s.cfg.sample_rate_hz) {
+        s.rate_tick = lv_tick_get();    /* re-measure before judging the rate */
+    }
 
     if (mode_changed) {
-        lv_chart_set_series_ext_y_array(s.chart, s.series, active_points());
+        /* The forced range refresh below redraws the trace in the new unit. */
         lv_buttonmatrix_set_button_ctrl(s.mode_matrix, (uint32_t)s.cfg.mode,
                                         LV_BUTTONMATRIX_CTRL_CHECKED);
         reset_peak();
     }
     if (geometry_changed || decimation_changed) {
-        configure_geometry();
-        rebuild_from_ring();
-        reset_peak();
-        format_div(buf, sizeof(buf), s.cfg.window_s);
-        lv_label_set_text(s.div_label, buf);
+        if (s.hold) {
+            /* Rebuilding now would replace the held capture with live data;
+             * keep it (and its s/div) until RUN. */
+            s.geometry_pending = true;
+        } else {
+            apply_geometry();
+            rebuild_from_ring();
+        }
     }
     if (mode_changed || geometry_changed || range_changed || decimation_changed) {
         refresh_range(true);
@@ -457,12 +682,25 @@ static void apply_settings(const settings_t *old)
     }
 }
 
+/* achieved_hz is 0 until the sensor's first full second, and straddles the
+ * old and new rate for a while after a change. */
+static bool rate_measured(const sensor_stats_t *st)
+{
+    return (st->achieved_hz != 0U) && (lv_tick_elaps(s.rate_tick) >= SCOPE_RATE_SETTLE_MS);
+}
+
+static bool rate_is_low(const sensor_stats_t *st)
+{
+    return rate_measured(st) &&
+           (st->achieved_hz * 100U < (uint32_t)s.cfg.sample_rate_hz * SCOPE_RATE_LOW_PCT);
+}
+
 /*====================
  * Labels
  *====================*/
 static void update_cursor_label(void)
 {
-    const int32_t *points = active_points();
+    const float *points = active_points();
     char value[24];
     float rel_s;
     lv_point_t p;
@@ -476,14 +714,14 @@ static void update_cursor_label(void)
         return;
     }
 
-    if (points[s.cursor_point] == LV_CHART_POINT_NONE) {
+    if (isnan(points[s.cursor_point])) {
         snprintf(value, sizeof(value), "--");
     } else {
-        format_value(value, sizeof(value),
-                     chart_to_value(points[s.cursor_point], s.cfg.mode), s.cfg.mode);
+        format_value(value, sizeof(value), points[s.cursor_point], s.cfg.mode);
     }
-    rel_s = -((float)(s.point_count - 1U - (uint32_t)s.cursor_point) *
-              (float)s.samples_per_point) / (float)s.cfg.sample_rate_hz;
+    /* Points are equal time bins; the newest one ends at the right edge. */
+    rel_s = -(float)(s.point_count - 1U - (uint32_t)s.cursor_point) *
+            (float)window_ms() / (float)s.point_count / 1000.0f;
     /* LVGL's builtin sprintf has no %f; format with the C library. */
     {
         char text[40];
@@ -508,33 +746,26 @@ static void update_cursor_label(void)
 
 static void update_labels(void)
 {
-    const int32_t *points = active_points();
+    const float *sums = (s.cfg.mode == SCOPE_MODE_MA) ? s.sums_ma : s.sums_mw;
     char buf[24];
-    float live = (s.cfg.mode == SCOPE_MODE_MA) ? s.live_ma : s.live_mw;
     float peak = (s.cfg.mode == SCOPE_MODE_MA) ? s.peak_ma : s.peak_mw;
     double sum = 0.0;
     uint32_t count = 0U;
 
     if (!s.have_sample) {
-        lv_label_set_text(s.live_label, "--");
         lv_label_set_text(s.avg_label, "avg --");
         lv_label_set_text(s.peak_label, "pk --");
         return;
     }
 
-    format_value(buf, sizeof(buf), live, s.cfg.mode);
-    lv_label_set_text(s.live_label, buf);
-
+    /* Mean of every sample in the window, not of the drawn points: with Max
+     * decimation those are per-bin peaks. */
     for (uint32_t i = 0U; i < s.point_count; i++) {
-        if (points[i] != LV_CHART_POINT_NONE) {
-            sum += (double)points[i];
-            count++;
-        }
+        sum += (double)sums[i];
+        count += s.counts[i];
     }
     if (count > 0U) {
-        format_value(buf, sizeof(buf),
-                     chart_to_value((int32_t)(sum / (double)count), s.cfg.mode),
-                     s.cfg.mode);
+        format_value(buf, sizeof(buf), (float)(sum / (double)count), s.cfg.mode);
         lv_label_set_text_fmt(s.avg_label, "avg %s", buf);
     } else {
         lv_label_set_text(s.avg_label, "avg --");
@@ -550,7 +781,7 @@ static void update_labels(void)
     update_cursor_label();
 }
 
-static void update_status(void)
+static void update_status(const sensor_stats_t *st)
 {
     uint32_t dropped = sample_ring_dropped(sensor_task_samples());
 
@@ -568,8 +799,18 @@ static void update_status(void)
     } else {
         lv_obj_add_flag(s.drop_label, LV_OBJ_FLAG_HIDDEN);
     }
+
+    if (rate_is_low(st)) {
+        lv_label_set_text_fmt(s.rate_label, "%lu/%u Hz", (unsigned long)st->achieved_hz,
+                              (unsigned int)s.cfg.sample_rate_hz);
+        lv_obj_remove_flag(s.rate_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s.rate_label, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
+/* The header label shows the current state; the footer button shows the
+ * action it will take. */
 static void set_hold(bool hold)
 {
     s.hold = hold;
@@ -579,12 +820,18 @@ static void set_hold(bool hold)
         lv_obj_set_style_text_color(s.state_label, lv_color_hex(UI_COLOR_HOLD), 0);
         lv_obj_add_state(s.run_button, LV_STATE_CHECKED);
     } else {
+        bool deferred = s.geometry_pending;
+
         lv_label_set_text(s.run_label, LV_SYMBOL_PAUSE " HOLD");
         lv_label_set_text(s.state_label, LV_SYMBOL_PLAY " RUN");
         lv_obj_set_style_text_color(s.state_label, lv_color_hex(UI_COLOR_RUN), 0);
         lv_obj_remove_state(s.run_button, LV_STATE_CHECKED);
+        if (deferred) {
+            s.geometry_pending = false;
+            apply_geometry();
+        }
         rebuild_from_ring();
-        refresh_range(false);
+        refresh_range(deferred);    /* a settings change forces a fresh range */
         lv_chart_refresh(s.chart);
         update_labels();
     }
@@ -597,8 +844,10 @@ static void scope_tick(lv_timer_t *timer)
 {
     sample_ring_t *ring = sensor_task_samples();
     uint32_t gen = settings_generation();
+    sensor_stats_t st;
+    uint32_t now;
     uint32_t head;
-    uint32_t retain;
+    uint32_t keep_from;
     bool new_data = false;
 
     (void)timer;
@@ -610,8 +859,11 @@ static void scope_tick(lv_timer_t *timer)
         apply_settings(&old);
     }
 
+    sensor_task_get_stats(&st);
+
+    /* Clock before head, as in rebuild_from_ring(). */
+    now = sensor_task_now_ms();
     head = sample_ring_head(ring);
-    retain = window_samples();
 
     if (s.hold) {
         /* Keep the VBUS readout live, discard everything else. */
@@ -621,15 +873,13 @@ static void scope_tick(lv_timer_t *timer)
             s.have_sample = true;
         }
         s.next_seq = head;
+    } else if (head - s.next_seq > window_samples()) {
+        /* Fell more than a window behind: rebuilding is cheaper and exact. */
+        rebuild_from_ring();
+        new_data = true;
     } else {
-        uint32_t lag = head - s.next_seq;
         sample_t sample;
 
-        /* Bound the work: never process more than one window per tick. */
-        if (lag > retain) {
-            s.next_seq = head - retain;
-            reset_acc();
-        }
         for (uint32_t seq = s.next_seq; seq != head; seq++) {
             if (sample_ring_get(ring, seq, &sample)) {
                 process_sample(&sample);
@@ -637,17 +887,27 @@ static void scope_tick(lv_timer_t *timer)
             }
         }
         s.next_seq = head;
+        /* Scroll with real time even when no sample arrived, so a stalled
+         * sensor shows up as a gap rather than a frozen trace. */
+        advance_to(now);
     }
 
-    /* Retain one window of history so RUN/mode/window changes can refill. */
-    sample_ring_consume(ring, (head > retain) ? (head - retain) : 0U);
+    /* Keep the longest window's worth of history whatever is on screen, by
+     * time rather than count, so zooming out or changing the rate redraws from
+     * it. 61 s at 333 Hz fits; the cap only guards the producer's headroom. */
+    keep_from = sample_ring_seek(ring, head, now - history_ms());
+    if (head - keep_from > SAMPLE_RING_CAPACITY - SAMPLE_RING_HEADROOM) {
+        keep_from = head - (SAMPLE_RING_CAPACITY - SAMPLE_RING_HEADROOM);
+    }
+    sample_ring_consume(ring, keep_from);
 
-    if (new_data) {
+    if (new_data || s.trace_changed) {
+        s.trace_changed = false;
         refresh_range(false);
         lv_chart_refresh(s.chart);
         update_labels();
     }
-    update_status();
+    update_status(&st);
 }
 
 /*====================
@@ -762,7 +1022,6 @@ static void gesture_event_cb(lv_event_t *e)
 static void build_header(void)
 {
     lv_obj_t *button;
-    lv_obj_t *title;
     lv_obj_t *right;
 
     s.header = ui_style_create_panel(s.screen);
@@ -774,12 +1033,6 @@ static void build_header(void)
     lv_obj_align(button, LV_ALIGN_LEFT_MID, SCOPE_MARGIN, 0);
     lv_obj_add_event_cb(button, settings_button_cb, LV_EVENT_CLICKED, NULL);
 
-    title = ui_style_create_label(s.header, "POWER SCOPE", UI_FONT_TITLE, UI_COLOR_TEXT);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
-    if (LV_HOR_RES < 640) {
-        lv_obj_add_flag(title, LV_OBJ_FLAG_HIDDEN);
-    }
-
     right = lv_obj_create(s.header);
     lv_obj_remove_style_all(right);
     lv_obj_set_size(right, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -790,15 +1043,18 @@ static void build_header(void)
 
     s.drop_label = ui_style_create_label(right, "", UI_FONT_SMALL, UI_COLOR_ERROR);
     lv_obj_add_flag(s.drop_label, LV_OBJ_FLAG_HIDDEN);
-    s.vbus_label = ui_style_create_label(right, "VBUS --.--- V", UI_FONT_BODY, UI_COLOR_TEXT);
-    s.state_label = ui_style_create_label(right, LV_SYMBOL_PLAY " RUN", UI_FONT_BODY, UI_COLOR_RUN);
+    s.rate_label = ui_style_create_label(right, "", UI_FONT_SMALL, UI_COLOR_HOLD);
+    lv_obj_add_flag(s.rate_label, LV_OBJ_FLAG_HIDDEN);
+    s.vbus_label = ui_style_create_label(right, "VBUS --.-- V", UI_FONT_BODY, UI_COLOR_TEXT);
+    /* set_hold() fills in the text and colour. */
+    s.state_label = ui_style_create_label(right, "", UI_FONT_BODY, UI_COLOR_RUN);
 }
 
 static void build_chart(void)
 {
     int32_t area_h = LV_VER_RES - SCOPE_HEADER_HEIGHT - SCOPE_FOOTER_HEIGHT;
     int32_t chart_w = LV_HOR_RES - SCOPE_SCALE_WIDTH - 2 * SCOPE_MARGIN;
-    int32_t chart_h = area_h - 2 * SCOPE_MARGIN;
+    int32_t chart_h = area_h - SCOPE_UNIT_HEIGHT - SCOPE_MARGIN;
 
     s.chart_area = lv_obj_create(s.screen);
     lv_obj_remove_style_all(s.chart_area);
@@ -807,10 +1063,20 @@ static void build_chart(void)
     lv_obj_add_flag(s.chart_area, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s.chart_area, background_click_cb, LV_EVENT_CLICKED, NULL);
 
+    /* Y unit caption, right-aligned over the scale labels. */
+    s.unit_label = ui_style_create_label(s.chart_area, "", UI_FONT_SMALL, UI_COLOR_TEXT_DIM);
+    lv_obj_set_width(s.unit_label,
+                     SCOPE_SCALE_WIDTH - SCOPE_SCALE_MAJOR_LEN - SCOPE_SCALE_LABEL_PAD);
+    lv_obj_set_style_text_align(s.unit_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(s.unit_label, 0, SCOPE_MARGIN / 2);
+
+    /* The scale and the chart both span 0..SCOPE_CHART_SPAN; apply_range()
+     * supplies the labels for whatever that represents. */
     s.scale = lv_scale_create(s.chart_area);
     lv_scale_set_mode(s.scale, LV_SCALE_MODE_VERTICAL_LEFT);
     lv_obj_set_size(s.scale, SCOPE_SCALE_WIDTH, chart_h);
-    lv_obj_set_pos(s.scale, 0, SCOPE_MARGIN);
+    lv_obj_set_pos(s.scale, 0, SCOPE_UNIT_HEIGHT);
+    lv_scale_set_range(s.scale, 0, SCOPE_CHART_SPAN);
     lv_scale_set_total_tick_count(s.scale, SCOPE_SCALE_TICKS);
     lv_scale_set_major_tick_every(s.scale, SCOPE_SCALE_MAJOR_EVERY);
     lv_scale_set_label_show(s.scale, true);
@@ -822,19 +1088,19 @@ static void build_chart(void)
     lv_obj_set_style_line_width(s.scale, 1, LV_PART_MAIN);
     lv_obj_set_style_line_color(s.scale, lv_color_hex(UI_COLOR_TEXT_DIM), LV_PART_INDICATOR);
     lv_obj_set_style_line_width(s.scale, 1, LV_PART_INDICATOR);
-    lv_obj_set_style_length(s.scale, 8, LV_PART_INDICATOR);
+    lv_obj_set_style_length(s.scale, SCOPE_SCALE_MAJOR_LEN, LV_PART_INDICATOR);
     lv_obj_set_style_line_color(s.scale, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS);
     lv_obj_set_style_line_width(s.scale, 1, LV_PART_ITEMS);
     lv_obj_set_style_length(s.scale, 4, LV_PART_ITEMS);
     lv_obj_set_style_text_font(s.scale, UI_FONT_SMALL, LV_PART_INDICATOR);
     lv_obj_set_style_text_color(s.scale, lv_color_hex(UI_COLOR_TEXT_DIM), LV_PART_INDICATOR);
-    lv_obj_set_style_pad_hor(s.scale, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_pad_hor(s.scale, SCOPE_SCALE_LABEL_PAD, LV_PART_INDICATOR);
 
     s.chart = lv_chart_create(s.chart_area);
     lv_obj_set_size(s.chart, chart_w, chart_h);
-    lv_obj_set_pos(s.chart, SCOPE_SCALE_WIDTH, SCOPE_MARGIN);
+    lv_obj_set_pos(s.chart, SCOPE_SCALE_WIDTH, SCOPE_UNIT_HEIGHT);
     lv_chart_set_type(s.chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_update_mode(s.chart, LV_CHART_UPDATE_MODE_SHIFT);
+    lv_chart_set_axis_range(s.chart, LV_CHART_AXIS_PRIMARY_Y, 0, SCOPE_CHART_SPAN);
     lv_chart_set_div_line_count(s.chart, SCOPE_CHART_HDIV, SCOPE_CHART_VDIV);
     lv_obj_set_style_pad_all(s.chart, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(s.chart, 0, LV_PART_MAIN);
@@ -856,6 +1122,7 @@ static void build_chart(void)
 
     s.series = lv_chart_add_series(s.chart, lv_color_hex(UI_COLOR_ACCENT),
                                    LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_set_series_ext_y_array(s.chart, s.series, s.chart_y);
     s.cursor = lv_chart_add_cursor(s.chart, lv_color_hex(UI_COLOR_CURSOR), LV_DIR_VER);
     s.cursor_point = LV_CHART_POINT_NONE;
 
@@ -869,47 +1136,42 @@ static void build_chart(void)
     lv_obj_remove_flag(s.cursor_label, LV_OBJ_FLAG_CLICKABLE);
 }
 
+static lv_obj_t *create_footer_row(void)
+{
+    lv_obj_t *row = lv_obj_create(s.footer);
+
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_event_cb(row, background_click_cb, LV_EVENT_CLICKED, NULL);
+    return row;
+}
+
 static void build_footer(void)
 {
     lv_obj_t *row1;
     lv_obj_t *row2;
-    bool two_rows = (LV_HOR_RES < 640);
 
     s.footer = ui_style_create_panel(s.screen);
     lv_obj_set_size(s.footer, LV_PCT(100), SCOPE_FOOTER_HEIGHT);
     lv_obj_set_pos(s.footer, 0, LV_VER_RES - SCOPE_FOOTER_HEIGHT);
-    lv_obj_set_flex_flow(s.footer, two_rows ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(s.footer, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s.footer, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER,
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_hor(s.footer, SCOPE_MARGIN, 0);
     lv_obj_add_event_cb(s.footer, background_click_cb, LV_EVENT_CLICKED, NULL);
 
-    if (two_rows) {
-        row1 = lv_obj_create(s.footer);
-        lv_obj_remove_style_all(row1);
-        lv_obj_set_size(row1, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(row1, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(row1, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                              LV_FLEX_ALIGN_CENTER);
-        row2 = lv_obj_create(s.footer);
-        lv_obj_remove_style_all(row2);
-        lv_obj_set_size(row2, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_obj_set_flex_flow(row2, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(row2, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
-                              LV_FLEX_ALIGN_CENTER);
-        lv_obj_add_event_cb(row1, background_click_cb, LV_EVENT_CLICKED, NULL);
-        lv_obj_add_event_cb(row2, background_click_cb, LV_EVENT_CLICKED, NULL);
-    } else {
-        row1 = s.footer;
-        row2 = s.footer;
-    }
+    row1 = create_footer_row();
+    row2 = create_footer_row();
 
     s.mode_matrix = lv_buttonmatrix_create(row1);
     lv_buttonmatrix_set_map(s.mode_matrix, mode_map);
     lv_buttonmatrix_set_button_ctrl(s.mode_matrix, 0, LV_BUTTONMATRIX_CTRL_CHECKABLE);
     lv_buttonmatrix_set_button_ctrl(s.mode_matrix, 1, LV_BUTTONMATRIX_CTRL_CHECKABLE);
     lv_buttonmatrix_set_one_checked(s.mode_matrix, true);
-    lv_obj_set_size(s.mode_matrix, SCOPE_MODE_MATRIX_WIDTH, 40);
+    lv_obj_set_size(s.mode_matrix, SCOPE_MODE_MATRIX_WIDTH, UI_SELECTOR_HEIGHT);
     lv_obj_set_style_pad_all(s.mode_matrix, 2, LV_PART_MAIN);
     lv_obj_set_style_pad_gap(s.mode_matrix, 2, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s.mode_matrix, lv_color_hex(UI_COLOR_PANEL_ALT), LV_PART_MAIN);
@@ -918,6 +1180,7 @@ static void build_footer(void)
     lv_obj_set_style_radius(s.mode_matrix, 6, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s.mode_matrix, lv_color_hex(UI_COLOR_PANEL_ALT), LV_PART_ITEMS);
     lv_obj_set_style_text_color(s.mode_matrix, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_text_font(s.mode_matrix, UI_FONT_CONTROL, LV_PART_ITEMS);
     lv_obj_set_style_bg_color(s.mode_matrix, lv_color_hex(UI_COLOR_ACCENT),
                               LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(s.mode_matrix, lv_color_hex(UI_COLOR_BG),
@@ -925,13 +1188,10 @@ static void build_footer(void)
     lv_obj_set_style_radius(s.mode_matrix, 4, LV_PART_ITEMS);
     lv_obj_add_event_cb(s.mode_matrix, mode_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    s.run_button = ui_style_create_button(row1, LV_SYMBOL_PAUSE " HOLD", &s.run_label);
+    /* set_hold() fills in the text. */
+    s.run_button = ui_style_create_button(row1, "", &s.run_label);
     lv_obj_set_width(s.run_button, SCOPE_RUN_BUTTON_WIDTH);
     lv_obj_add_event_cb(s.run_button, run_event_cb, LV_EVENT_CLICKED, NULL);
-
-    s.live_label = ui_style_create_label(row1, "--", UI_FONT_READOUT, UI_COLOR_ACCENT);
-    lv_obj_set_width(s.live_label, SCOPE_LIVE_LABEL_WIDTH);
-    lv_obj_set_style_text_align(s.live_label, LV_TEXT_ALIGN_RIGHT, 0);
 
     s.div_label = ui_style_create_label(row2, "1 s/div", UI_FONT_BODY, UI_COLOR_TEXT_DIM);
     lv_obj_set_width(s.div_label, SCOPE_DIV_LABEL_WIDTH);
@@ -947,9 +1207,6 @@ static void build_footer(void)
 
 lv_obj_t *ui_scope_create(void)
 {
-    settings_t initial;
-    char buf[24];
-
     memset(&s, 0, sizeof(s));
     s.cursor_point = LV_CHART_POINT_NONE;
     reset_peak();
@@ -967,23 +1224,15 @@ lv_obj_t *ui_scope_create(void)
     /* Initial configuration straight from settings. */
     settings_get(&s.cfg);
     s.settings_gen = settings_generation();
+    s.rate_tick = lv_tick_get();
     lv_obj_update_layout(s.chart);
-    configure_geometry();
+    apply_geometry();
     clear_points();
-    lv_chart_set_series_ext_y_array(s.chart, s.series, active_points());
     lv_buttonmatrix_set_button_ctrl(s.mode_matrix, (uint32_t)s.cfg.mode,
                                     LV_BUTTONMATRIX_CTRL_CHECKED);
-    format_div(buf, sizeof(buf), s.cfg.window_s);
-    lv_label_set_text(s.div_label, buf);
-    refresh_range(true);
-    if (!s.range_valid) {
-        /* No data yet: show a sensible default range until samples arrive. */
-        initial = s.cfg;
-        apply_range(0.0f, (initial.mode == SCOPE_MODE_MA) ? 100.0f : 1000.0f, true);
-        s.range_valid = false;
-    }
+    refresh_range(true);    /* no data yet: the default range for the unit */
     set_hold(false);
 
-    s.timer = lv_timer_create(scope_tick, 1000U / s.cfg.refresh_hz, NULL);
+    s.timer = lv_timer_create(scope_tick, 1000U / SCOPE_REFRESH_HZ, NULL);
     return s.screen;
 }

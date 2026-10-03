@@ -16,6 +16,8 @@
 #include "FreeRTOSConfig.h"
 #include "task.h"
 
+#include "prof.h"
+
 static volatile uint32_t idle_time_sum = 0;
 static volatile uint32_t non_idle_time_sum = 0;
 static volatile uint32_t task_switch_timestamp = 0;
@@ -27,6 +29,8 @@ void freertos_task_switch_in(const char *name)
         idle_task_running = true;
     else
         idle_task_running = false;
+
+    prof_task_switched_in(name);
 
     task_switch_timestamp = xTaskGetTickCount();
 }

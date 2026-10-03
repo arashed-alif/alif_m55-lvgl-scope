@@ -68,7 +68,7 @@ INA228 driver (existing) --> sensor_task --> sample_ring (SPSC) --> ui_update ti
       float    power_mw;
   } sample_t;
   ```
-- Capacity: longest window × fastest rate, rounded to a power of two. 60 s × 500 Hz = 30000 → 32768 × 16 B = 512 KB. The Ensemble has plenty of SRAM but check which region the buffer lands in and that it's not competing with the display buffers; if needed cap window×rate (e.g. 60 s only at ≤ 100 Hz) and document the limit. Place the buffer in a suitable memory section via the project's linker attributes.
+- Capacity: longest window × fastest rate, rounded to a power of two. 60 s × 333 Hz = 20000 → 32768 × 16 B = 512 KB. The Ensemble has plenty of SRAM but check which region the buffer lands in and that it's not competing with the display buffers; if needed cap window×rate (e.g. 60 s only at ≤ 100 Hz) and document the limit. Place the buffer in a suitable memory section via the project's linker attributes.
 
 ---
 
@@ -112,7 +112,7 @@ Reached via the header button; return via back button (top-left) or swipe-right.
 |---|---|---|---|
 | Display mode | `lv_buttonmatrix` | mA / mW | mW |
 | Time window | `lv_dropdown` | 1, 2, 5, 10, 30, 60 s | 10 s |
-| Sample rate | `lv_dropdown` | 10, 50, 100, 200, 500 Hz | 100 Hz |
+| Sample rate | `lv_dropdown` | 20, 100, 333 Hz | 100 Hz |
 | Y range | `lv_dropdown` | Auto / Manual | Auto |
 | Y min / Y max (manual only) | `lv_textarea` + numeric `lv_keyboard` | float | 0 / 1000 |
 | Decimation | `lv_dropdown` | Mean / Max | Mean |
@@ -166,7 +166,7 @@ Keep a build configuration (or a `-DUI_DEMO_DATA=1` define) that swaps the senso
 ## 5. Milestones & acceptance criteria
 
 1. **Touch driver** — compiles against the current SDK, registered as an LVGL pointer indev. *Accept:* run the LVGL widgets demo (`lv_demo_widgets`) and interact with buttons/sliders by touch; log raw coordinates to confirm orientation/calibration matches the display.
-2. **Sensor task + ring buffer** — sensor task calls the existing INA228 API at the configured rate; ring never overruns at 500 Hz. *Accept:* dropped-sample counter stays 0 over 10 minutes; values match a bench meter within 2 %.
+2. **Sensor task + ring buffer** — sensor task calls the existing INA228 API at the configured rate; ring never overruns at 333 Hz. *Accept:* dropped-sample counter stays 0 over 10 minutes; values match a bench meter within 2 %.
 3. **Scope screen, static** — layout renders; VBUS label updates; chart shows a synthetic sine with `UI_DEMO_DATA=1`. *Accept:* ≥ 20 fps, no tearing (double buffering already in place).
 4. **Live chart** — real data, auto-range, mA/mW toggle, RUN/HOLD. *Accept:* toggling mode swaps units everywhere and the trace refills instantly; HOLD freezes trace while VBUS keeps updating.
 5. **Settings screen** — all controls wired, live effect, navigation both ways. *Accept:* changing window 10 s → 1 s visibly stretches the trace within one refresh.

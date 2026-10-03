@@ -66,7 +66,8 @@ SECTIONS
     *mpu*(.text* .rodata*)
     *sau_tcm_ns_setup*(.text* .rodata*)
 
-    *lv_*(.text* .rodata*)
+    *(.text*)
+    *(.rodata*)
 
     . = ALIGN(16);
   } > MRAM
@@ -74,12 +75,15 @@ SECTIONS
   .copy.table : ALIGN(4)
   {
     __copy_table_start__ = .;
-    LONG ( LOADADDR(.data.at_dtcm) )
-    LONG ( ADDR(.data.at_dtcm) )
-    LONG ( SIZEOF(.data.at_dtcm)/4 )
-    LONG ( LOADADDR(.code.at_itcm) )
-    LONG ( ADDR(.code.at_itcm) )
-    LONG ( SIZEOF(.code.at_itcm)/4 )
+    LONG ( LOADADDR(.data.at_dtcm))
+    LONG ( ADDR(.data.at_dtcm))
+    LONG ( SIZEOF(.data.at_dtcm)/4)
+    LONG ( LOADADDR(.code.at_itcm))
+    LONG ( ADDR(.code.at_itcm))
+    LONG ( SIZEOF(.code.at_itcm)/4)
+    LONG ( LOADADDR(.code.at_sram1))
+    LONG ( ADDR(.code.at_sram1))
+    LONG ( SIZEOF(.code.at_sram1)/4)
     __copy_table_end__ = .;
     . = ALIGN(16);
   } > MRAM
@@ -98,6 +102,16 @@ SECTIONS
     __zero_table_end__ = .;
     . = ALIGN(16);
   } > MRAM
+
+#if __HAS_BULK_SRAM
+  .code.at_sram1 : ALIGN(8)
+  {
+    *(.data*)
+    *(.rodata*)
+    *(.text*)
+    . = ALIGN(16);
+  } > SRAM1 AT > MRAM
+#endif
 
   .code.at_itcm : ALIGN(8)
   {
@@ -227,11 +241,4 @@ SECTIONS
 
   /* Check if data + heap + stack exceeds RAM limit */
   ASSERT(__StackLimit >= __HeapLimit, "region RAM overflowed with stack")
-
-#if __HAS_BULK_SRAM
-  .resources : ALIGN(8)
-  {
-    *(.resources*)
-  } > SRAM1 AT > MRAM
-#endif
 }

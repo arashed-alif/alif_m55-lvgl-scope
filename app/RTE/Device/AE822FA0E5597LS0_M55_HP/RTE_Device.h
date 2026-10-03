@@ -477,7 +477,7 @@
 
 // <o> ISP log level
 //    <0=> NONE
-//    <1 => Logs all fatal errors.
+//    <1=> Logs all fatal errors.
 //    <2=> Logs all warnings.
 //    <3=> Logs all informational messages.
 //    <4=> Logs all debug messages.
@@ -1631,7 +1631,7 @@
 //     <5=> 5
 // <i> defines select active touch points
 // <i> default: 5
-#define RTE_ACTIVE_TOUCH_POINTS               5
+#define RTE_ACTIVE_TOUCH_POINTS               1
 
 // <o> RTE_GT911_TOUCH_I2C_SLAVE_ADDRESS_SEL
 // <i> Defines GT911 Touchscreen i2c slave address selection
@@ -3728,7 +3728,7 @@
 //    <1=> ENABLE
 // <i> Defines Blocking mode support for UART4
 // <i> Default: DISABLE
-#define RTE_UART4_BLOCKING_MODE_ENABLE 0
+#define RTE_UART4_BLOCKING_MODE_ENABLE 1
 
 #endif  // UART4
 

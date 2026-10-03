@@ -8,15 +8,19 @@ project:
         - file: board_utils.c
         - file: lv_port/port_disp.c
         - file: lv_port/port_disp.h
-        - file: drv_ina228_i3c.c
+        - file: drv_ina228_i2c.c
+        # - file: drv_ina228_i3c.c
         - file: drv_ina228.h
+        - file: GT911_touch_driver.c
+        - file: Driver_Touch_Screen.h
         - file: sample_ring.c
         - file: sample_ring.h
         - file: sensor_task.c
         - file: sensor_task.h
         - file: settings.c
         - file: settings.h
-        # - file: demo_gt911.c
+        - file: prof.c
+        - file: prof.h
 
     - group: UI
       files:
@@ -58,7 +62,7 @@ project:
     - component: ARM::RTOS&FreeRTOS:Timers
 
     # peripheral drivers & middleware
-    - component: AlifSemiconductor::BSP:External peripherals:GT911 Touch Controller
+    # - component: AlifSemiconductor::BSP:External peripherals:GT911 Touch Controller
     - component: AlifSemiconductor::BSP:External peripherals:ILI9806E LCD panel
     - component: AlifSemiconductor::CMSIS Driver:I2C
     - component: AlifSemiconductor::Device:SOC Peripherals:CDC
@@ -77,7 +81,6 @@ project:
     # Widgets demo kept for touch bring-up (lv_demo_widgets); benchmark removed
     - component: LVGL::LVGL&LVGL9:Demos:Assets
     - component: LVGL::LVGL&LVGL9:Demos:Widgets
-
     # D/AVE2D driver
     # - component: AlifSemiconductor::Graphics:DAVE2D:Layer2
     # - component: AlifSemiconductor::Graphics:DAVE2D:Layer1

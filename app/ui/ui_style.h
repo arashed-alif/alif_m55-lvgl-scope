@@ -25,13 +25,25 @@ extern "C" {
 
 #define UI_FONT_SMALL   (&lv_font_montserrat_14)
 #define UI_FONT_BODY    (&lv_font_montserrat_16)
-#define UI_FONT_TITLE   (&lv_font_montserrat_20)
+#define UI_FONT_CONTROL (&lv_font_montserrat_20)   /* buttons, dropdowns, settings rows */
+#define UI_FONT_TITLE   (&lv_font_montserrat_24)
 #define UI_FONT_READOUT (&lv_font_montserrat_28)
+
+/* Touch target sizes for the 480x800 portrait panel: taller rather than wider.
+ * UI_CONTROL_PAD_VER makes dropdowns and text fields 50 px: a 22 px
+ * UI_FONT_CONTROL line plus padding and the theme's 2 px border, top and
+ * bottom. */
+#define UI_BUTTON_HEIGHT   55
+#define UI_BUTTON_PAD_HOR  20
+#define UI_CONTROL_PAD_VER 12
+#define UI_SELECTOR_HEIGHT 60   /* mA/mW button matrix */
 
 extern lv_style_t ui_style_screen;
 extern lv_style_t ui_style_panel;
 extern lv_style_t ui_style_button;
 extern lv_style_t ui_style_button_checked;
+/* Dropdowns and text fields, on top of the theme. */
+extern lv_style_t ui_style_control;
 
 void ui_style_init(void);
 

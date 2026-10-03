@@ -4,6 +4,7 @@ lv_style_t ui_style_screen;
 lv_style_t ui_style_panel;
 lv_style_t ui_style_button;
 lv_style_t ui_style_button_checked;
+lv_style_t ui_style_control;
 
 void ui_style_init(void)
 {
@@ -27,15 +28,21 @@ void ui_style_init(void)
     lv_style_set_border_width(&ui_style_button, 1);
     lv_style_set_radius(&ui_style_button, 6);
     lv_style_set_text_color(&ui_style_button, lv_color_hex(UI_COLOR_TEXT));
-    lv_style_set_text_font(&ui_style_button, UI_FONT_BODY);
-    lv_style_set_pad_hor(&ui_style_button, 12);
-    lv_style_set_pad_ver(&ui_style_button, 6);
+    lv_style_set_text_font(&ui_style_button, UI_FONT_CONTROL);
+    lv_style_set_height(&ui_style_button, UI_BUTTON_HEIGHT);
+    lv_style_set_pad_hor(&ui_style_button, UI_BUTTON_PAD_HOR);
     lv_style_set_shadow_width(&ui_style_button, 0);
 
     lv_style_init(&ui_style_button_checked);
     lv_style_set_bg_color(&ui_style_button_checked, lv_color_hex(UI_COLOR_ACCENT));
     lv_style_set_border_color(&ui_style_button_checked, lv_color_hex(UI_COLOR_ACCENT));
     lv_style_set_text_color(&ui_style_button_checked, lv_color_hex(UI_COLOR_BG));
+
+    lv_style_init(&ui_style_control);
+    lv_style_set_bg_color(&ui_style_control, lv_color_hex(UI_COLOR_PANEL_ALT));
+    lv_style_set_border_color(&ui_style_control, lv_color_hex(UI_COLOR_BORDER));
+    lv_style_set_text_font(&ui_style_control, UI_FONT_CONTROL);
+    lv_style_set_pad_ver(&ui_style_control, UI_CONTROL_PAD_VER);
 }
 
 lv_obj_t *ui_style_create_panel(lv_obj_t *parent)
