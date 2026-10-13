@@ -15,6 +15,7 @@
 #include <RTE_Device.h>
 #include "Driver_CDC200.h" // Display driver
 #include "Driver_Touch_Screen.h"
+#include "motion_task.h"
 #include "sys_utils.h"     // ENABLE, DISABLE macros
 
 #if LV_USE_DRAW_DAVE2D
@@ -305,20 +306,27 @@ static void disp_flush_wait(lv_display_t * disp)
 #endif
 }
 
-/* Read the latest touch state and expose the first contact to LVGL. */
+/* Read the latest touch state and expose the first contact to LVGL. A touch
+ * that lands while the backlight is dimmed only wakes it: the whole press is
+ * reported as released, so nothing on the (possibly dark) screen is hit. */
 static void touch_read(lv_indev_t * indev, lv_indev_data_t * data)
 {
+    static bool touch_throw_away;
     (void) indev;
 
     if (Touchdrv->GetState(&touch_state) != ARM_DRIVER_OK ||
         touch_state.numtouches == 0) {
+        touch_throw_away = false;
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
 
     data->point.x = touch_state.coordinates[0].x;
     data->point.y = touch_state.coordinates[0].y;
-    data->state = LV_INDEV_STATE_PRESSED;
+    if (motion_task_touch()) {
+        touch_throw_away = true;
+    }
+    data->state = touch_throw_away ? LV_INDEV_STATE_RELEASED : LV_INDEV_STATE_PRESSED;
 }
 
 /* Display event handler */

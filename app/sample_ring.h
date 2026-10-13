@@ -4,7 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* 32768 x 16 B = 512 KB. Sized for 60 s at 333 Hz (20000) plus slack. */
+/* INA228s sampled together; every sample holds one reading of each. */
+#define SAMPLE_CHANNELS (2U)
+
+/* 32768 x 28 B = 896 KB. Sized for 60 s at 333 Hz (20000) plus slack. */
 #define SAMPLE_RING_CAPACITY (32768U)
 #define SAMPLE_RING_INDEX_MASK (SAMPLE_RING_CAPACITY - 1U)
 /* Space the consumer always leaves free so the producer can keep pushing while
@@ -12,10 +15,14 @@
 #define SAMPLE_RING_HEADROOM (1024U)
 
 typedef struct {
-    uint32_t t_ms;
     float vbus_v;
     float current_ma;
     float power_mw;
+} sample_ch_t;
+
+typedef struct {
+    uint32_t t_ms;
+    sample_ch_t ch[SAMPLE_CHANNELS];
 } sample_t;
 
 /* Single producer (sensor task) / single consumer (UI timer).

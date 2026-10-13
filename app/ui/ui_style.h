@@ -22,6 +22,12 @@ extern "C" {
 #define UI_COLOR_HOLD      0xE8873AU
 #define UI_COLOR_CURSOR    0x5EC8F2U
 #define UI_COLOR_ERROR     0xE05A5AU
+/* Scope channel colours, CH1 first (ui_style_channel_color()). */
+#define UI_COLOR_CH1       UI_COLOR_ACCENT
+#define UI_COLOR_CH2       0xD674E8U
+#define UI_COLOR_CH3       0x5FD0A0U
+#define UI_COLOR_CH4       0x6FA8FFU
+#define UI_CHANNEL_COLORS  4U
 
 #define UI_FONT_SMALL   (&lv_font_montserrat_14)
 #define UI_FONT_BODY    (&lv_font_montserrat_16)
@@ -54,6 +60,8 @@ lv_obj_t *ui_style_create_label(lv_obj_t *parent, const char *text,
 /* Button with a centred text label; returns the button, label via out param. */
 lv_obj_t *ui_style_create_button(lv_obj_t *parent, const char *text,
                                  lv_obj_t **label_out);
+/* Trace / readout colour of scope channel ch (0 = CH1). */
+uint32_t ui_style_channel_color(uint32_t ch);
 
 #ifdef __cplusplus
 }

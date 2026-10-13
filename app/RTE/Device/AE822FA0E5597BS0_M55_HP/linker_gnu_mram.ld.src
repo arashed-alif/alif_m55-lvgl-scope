@@ -66,9 +66,6 @@ SECTIONS
     *mpu*(.text* .rodata*)
     *sau_tcm_ns_setup*(.text* .rodata*)
 
-    *(.text*)
-    *(.rodata*)
-
     . = ALIGN(16);
   } > MRAM
 

@@ -18,6 +18,9 @@
 #include "board_config.h"
 #include "board_utils.h"
 
+#include "backlight.h"
+#include "drv_i3c_bus.h"
+#include "motion_task.h"
 #include "port_disp.h"
 #include "prof.h"
 #include "sensor_task.h"
@@ -145,22 +148,33 @@ int main (void)
 #endif
 
     clock_init();
-
-#if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
     prof_init();
     settings_init();
+
+    // Backlight PWM at the saved brightness; the motion task dims it later
+    settings_t boot_cfg;
+    settings_get(&boot_cfg);
+    backlight_init((uint8_t)boot_cfg.bright_pct);
+
+    // Shared I3C bus (INA228 + BMI323): bring it up before either task uses it
+    if (i3c_bus_init() != 0) {
+        __BKPT();
+    }
 
     // Sensor task: high priority so sampling is not disturbed by rendering
     const sensor_task_config_t sensor_config = {
         SENSOR_TASK_DEFAULT_PERIOD_MS,
         tskIDLE_PRIORITY + 3U
     };
-    if (!sensor_task_start(INA228_I2C_ADDR, &sensor_config)) {
+    if (!sensor_task_start(&sensor_config)) {
         __BKPT();
     }
-#endif
 
-#if defined(LV_USE_OS) && (LV_USE_OS == LV_OS_FREERTOS)
+    // Motion task: pick-up / set-down auto-dim, between LVGL and the sensor
+    if (!motion_task_start(tskIDLE_PRIORITY + 2U)) {
+        __BKPT();
+    }
+
     // Create application main thread (2048 words = 8 KB stack)
     if (xTaskCreate(lvgl_thread, "LVGL", 2048, NULL,
                     tskIDLE_PRIORITY+1, &lvgl_task_handle) != pdPASS) {
@@ -180,12 +194,6 @@ int main (void)
 
     // Start thread execution
     vTaskStartScheduler();
-#else
-    // Initialize SysTick timer as LVGL tick timer
-    SysTick_Config(SystemCoreClock/(LVGL_TICK_TIME_MS*SYSTICKS_PER_SECOND));
-    // Call LVGL thread function directly
-    lvgl_thread(NULL);
-#endif
 
     return 0;
 }

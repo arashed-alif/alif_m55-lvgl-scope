@@ -8,8 +8,12 @@ project:
         - file: board_utils.c
         - file: lv_port/port_disp.c
         - file: lv_port/port_disp.h
-        - file: drv_ina228_i2c.c
-        # - file: drv_ina228_i3c.c
+        - file: drv_i3c_bus.c
+        - file: drv_i3c_bus.h
+        - file: drv_bmi323_i3c.c
+        - file: drv_bmi323.h
+        # - file: drv_ina228_i2c.c
+        - file: drv_ina228_i3c.c
         - file: drv_ina228.h
         - file: GT911_touch_driver.c
         - file: Driver_Touch_Screen.h
@@ -21,6 +25,12 @@ project:
         - file: settings.h
         - file: prof.c
         - file: prof.h
+        - file: utimer.c
+        - file: utimer_pwm.h
+        - file: backlight.c
+        - file: backlight.h
+        - file: motion_task.c
+        - file: motion_task.h
 
     - group: UI
       files:

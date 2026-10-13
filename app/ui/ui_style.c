@@ -82,3 +82,12 @@ lv_obj_t *ui_style_create_button(lv_obj_t *parent, const char *text,
     }
     return button;
 }
+
+uint32_t ui_style_channel_color(uint32_t ch)
+{
+    static const uint32_t colors[UI_CHANNEL_COLORS] = {
+        UI_COLOR_CH1, UI_COLOR_CH2, UI_COLOR_CH3, UI_COLOR_CH4
+    };
+
+    return colors[ch % UI_CHANNEL_COLORS];
+}

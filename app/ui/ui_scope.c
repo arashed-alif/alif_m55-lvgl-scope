@@ -15,7 +15,8 @@
  *====================*/
 /* Fixed layout for the 480 x 800 portrait panel. */
 #define SCOPE_HEADER_HEIGHT      60
-#define SCOPE_FOOTER_HEIGHT      100    /* two rows */
+/* Two rows; the readout row grows by a line per extra channel. */
+#define SCOPE_FOOTER_HEIGHT      (100 + 20 * ((int32_t)SAMPLE_CHANNELS - 1))
 #define SCOPE_SCALE_WIDTH        62
 #define SCOPE_MARGIN             6
 /* Room above the chart for the Y unit caption; the top tick label also
@@ -81,28 +82,12 @@ typedef struct {
     const char *name;
 } scope_unit_t;
 
+/* One trace per INA228 (sample_t channel). */
 typedef struct {
-    lv_obj_t *screen;
-    lv_obj_t *header;
-    lv_obj_t *chart_area;
-    lv_obj_t *footer;
-    lv_obj_t *chart;
-    lv_obj_t *scale;
-    lv_obj_t *unit_label;
+    lv_chart_series_t *series;
     lv_obj_t *vbus_label;
-    lv_obj_t *drop_label;
-    lv_obj_t *rate_label;
-    lv_obj_t *state_label;
-    lv_obj_t *run_button;
-    lv_obj_t *run_label;
-    lv_obj_t *mode_matrix;
-    lv_obj_t *div_label;
     lv_obj_t *avg_label;
     lv_obj_t *peak_label;
-    lv_obj_t *cursor_label;
-    lv_chart_series_t *series;
-    lv_chart_cursor_t *cursor;
-    lv_timer_t *timer;
 
     /* One entry per time bin, oldest first. Values are in display units (mA,
      * mW) as the decimation picks them; NAN marks a bin with nothing to draw. */
@@ -115,16 +100,47 @@ typedef struct {
     uint32_t counts[SCOPE_CHART_MAX_POINTS];
     /* The active trace mapped onto the Y range; this is what the chart draws. */
     int32_t chart_y[SCOPE_CHART_MAX_POINTS];
-    uint32_t point_count;
     point_acc_t acc_ma;             /* samples in the bin being filled */
     point_acc_t acc_mw;
+    /* Per channel, so a channel that was off doesn't stretch its last value
+     * across the time it wasn't read. */
+    uint32_t last_sample_ms;        /* for the SCOPE_GAP_MS rule */
+    bool have_last_sample;
+
+    bool visible;                   /* enabled in settings and present */
+    bool have_sample;
+    float vbus_v;
+    float peak_ma;
+    float peak_mw;
+} scope_channel_t;
+
+typedef struct {
+    lv_obj_t *screen;
+    lv_obj_t *header;
+    lv_obj_t *chart_area;
+    lv_obj_t *footer;
+    lv_obj_t *chart;
+    lv_obj_t *scale;
+    lv_obj_t *unit_label;
+    lv_obj_t *empty_label;
+    lv_obj_t *drop_label;
+    lv_obj_t *rate_label;
+    lv_obj_t *state_label;
+    lv_obj_t *run_button;
+    lv_obj_t *run_label;
+    lv_obj_t *mode_matrix;
+    lv_obj_t *div_label;
+    lv_obj_t *cursor_label;
+    lv_chart_cursor_t *cursor;
+    lv_timer_t *timer;
+
+    scope_channel_t ch[SAMPLE_CHANNELS];
+    uint32_t point_count;
     /* The window is point_count equal time bins. Bin `bin_index` of the current
      * cycle ends at bin_origin_ms + (bin_index + 1) * window_ms / point_count;
      * one cycle spans exactly one window, so the origin steps by window_ms. */
     uint32_t bin_origin_ms;
     uint32_t bin_index;
-    uint32_t last_sample_ms;        /* for the SCOPE_GAP_MS rule */
-    bool have_last_sample;
     bool trace_changed;             /* a bin closed since the last redraw */
     uint16_t shown_window_s;        /* window the trace is built for; lags
                                      * cfg.window_s while a change waits for RUN */
@@ -133,10 +149,6 @@ typedef struct {
 
     uint32_t next_seq;
     bool hold;
-    bool have_sample;
-    float vbus_v;
-    float peak_ma;
-    float peak_mw;
 
     bool range_valid;
     float range_lo;
@@ -147,6 +159,7 @@ typedef struct {
     const char *scale_src[SCOPE_SCALE_LABELS + 1];
 
     int32_t cursor_point;
+    int32_t empty_state;            /* update_empty_label(): what it shows */
     uint32_t settings_gen;
     settings_t cfg;
 } scope_state_t;
@@ -158,9 +171,9 @@ static const char *mode_map[] = {"mA", "mW", ""};
 /*====================
  * Helpers
  *====================*/
-static float *active_points(void)
+static float *active_points(scope_channel_t *c)
 {
-    return (s.cfg.mode == SCOPE_MODE_MA) ? s.points_ma : s.points_mw;
+    return (s.cfg.mode == SCOPE_MODE_MA) ? c->points_ma : c->points_mw;
 }
 
 /* Micro below 1 milli-unit, the base unit from 1000 up. */
@@ -240,6 +253,31 @@ static int decimals_for(float v)
     return 3;
 }
 
+/* Visible channels in settings order; the cursor and its readout follow them. */
+static uint32_t visible_count(void)
+{
+    uint32_t n = 0U;
+
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        if (s.ch[i].visible) {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Series the cursor is attached to: any series gives the same x, so the first
+ * visible one, else CH1. */
+static lv_chart_series_t *cursor_series(void)
+{
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        if (s.ch[i].visible) {
+            return s.ch[i].series;
+        }
+    }
+    return s.ch[0].series;
+}
+
 /*====================
  * Y range and scale
  *====================*/
@@ -264,10 +302,13 @@ static int32_t to_chart(float v)
 
 static void remap_chart(void)
 {
-    const float *points = active_points();
+    for (uint32_t c = 0U; c < SAMPLE_CHANNELS; c++) {
+        scope_channel_t *ch = &s.ch[c];
+        const float *points = active_points(ch);
 
-    for (uint32_t i = 0U; i < s.point_count; i++) {
-        s.chart_y[i] = to_chart(points[i]);
+        for (uint32_t i = 0U; i < s.point_count; i++) {
+            ch->chart_y[i] = to_chart(points[i]);
+        }
     }
 }
 
@@ -277,7 +318,8 @@ static float min_span(void)
 }
 
 /* Set the Y range (display units), label the scale in a unit that suits its
- * magnitude, and redraw the trace against it. The caller refreshes the chart. */
+ * magnitude, and redraw the traces against it. The caller refreshes the chart.
+ * All channels share the one axis. */
 static void apply_range(float lo, float hi)
 {
     scope_unit_t unit;
@@ -348,10 +390,10 @@ static void ideal_auto_range(float min_v, float max_v, float *lo_out, float *hi_
     *step_out = step;
 }
 
-/* Returns false when there is no data to range on. */
+/* Returns false when there is no data to range on. Covers every visible
+ * channel. */
 static bool update_auto_range(void)
 {
-    const float *points = active_points();
     float min_v = INFINITY;
     float max_v = -INFINITY;
     float step;
@@ -359,16 +401,24 @@ static bool update_auto_range(void)
     float hi;
     uint32_t hold_ms;
 
-    for (uint32_t i = 0U; i < s.point_count; i++) {
-        float v = points[i];
-        if (isnan(v)) {
+    for (uint32_t c = 0U; c < SAMPLE_CHANNELS; c++) {
+        const float *points;
+
+        if (!s.ch[c].visible) {
             continue;
         }
-        if (v < min_v) {
-            min_v = v;
-        }
-        if (v > max_v) {
-            max_v = v;
+        points = active_points(&s.ch[c]);
+        for (uint32_t i = 0U; i < s.point_count; i++) {
+            float v = points[i];
+            if (isnan(v)) {
+                continue;
+            }
+            if (v < min_v) {
+                min_v = v;
+            }
+            if (v > max_v) {
+                max_v = v;
+            }
         }
     }
     if (min_v > max_v) {
@@ -433,32 +483,38 @@ static void refresh_range(bool force)
  *====================*/
 #define SHIFT_LEFT(arr, n) memmove(&(arr)[0], &(arr)[1], ((n) - 1U) * sizeof((arr)[0]))
 
-static void reset_acc(void)
+static void reset_acc(scope_channel_t *c)
 {
-    memset(&s.acc_ma, 0, sizeof(s.acc_ma));
-    memset(&s.acc_mw, 0, sizeof(s.acc_mw));
-    s.acc_ma.max = -INFINITY;
-    s.acc_mw.max = -INFINITY;
+    memset(&c->acc_ma, 0, sizeof(c->acc_ma));
+    memset(&c->acc_mw, 0, sizeof(c->acc_mw));
+    c->acc_ma.max = -INFINITY;
+    c->acc_mw.max = -INFINITY;
 }
 
 static void clear_points(void)
 {
-    for (uint32_t i = 0U; i < SCOPE_CHART_MAX_POINTS; i++) {
-        s.points_ma[i] = NAN;
-        s.points_mw[i] = NAN;
-        s.sums_ma[i] = 0.0f;
-        s.sums_mw[i] = 0.0f;
-        s.counts[i] = 0U;
-        s.chart_y[i] = LV_CHART_POINT_NONE;
+    for (uint32_t ch = 0U; ch < SAMPLE_CHANNELS; ch++) {
+        scope_channel_t *c = &s.ch[ch];
+
+        for (uint32_t i = 0U; i < SCOPE_CHART_MAX_POINTS; i++) {
+            c->points_ma[i] = NAN;
+            c->points_mw[i] = NAN;
+            c->sums_ma[i] = 0.0f;
+            c->sums_mw[i] = 0.0f;
+            c->counts[i] = 0U;
+            c->chart_y[i] = LV_CHART_POINT_NONE;
+        }
+        reset_acc(c);
+        c->have_last_sample = false;
     }
-    reset_acc();
-    s.have_last_sample = false;
 }
 
 static void reset_peak(void)
 {
-    s.peak_ma = -INFINITY;
-    s.peak_mw = -INFINITY;
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        s.ch[i].peak_ma = -INFINITY;
+        s.ch[i].peak_mw = -INFINITY;
+    }
 }
 
 static void acc_add(point_acc_t *acc, float v)
@@ -510,36 +566,40 @@ static void start_timeline(uint32_t start_ms)
     s.bin_index = 0U;
 }
 
-/* Append the bin being filled to the trace. An empty bin repeats the previous
- * point over a short dropout and becomes a gap once the sensor has been
- * silent for SCOPE_GAP_MS; either way it adds nothing to the average. */
+/* Append the bin being filled to each channel's trace. An empty bin repeats
+ * the previous point over a short dropout and becomes a gap once that channel
+ * has been silent for SCOPE_GAP_MS; either way it adds nothing to the average. */
 static void close_bin(uint32_t end_ms)
 {
     uint32_t n = s.point_count;
     uint32_t last = n - 1U;
-    float ma = NAN;
-    float mw = NAN;
 
-    if (s.acc_ma.count > 0U) {
-        ma = acc_result(&s.acc_ma);
-        mw = acc_result(&s.acc_mw);
-    } else if (s.have_last_sample && (end_ms - s.last_sample_ms) <= SCOPE_GAP_MS) {
-        ma = s.points_ma[last];
-        mw = s.points_mw[last];
+    for (uint32_t ch = 0U; ch < SAMPLE_CHANNELS; ch++) {
+        scope_channel_t *c = &s.ch[ch];
+        float ma = NAN;
+        float mw = NAN;
+
+        if (c->acc_ma.count > 0U) {
+            ma = acc_result(&c->acc_ma);
+            mw = acc_result(&c->acc_mw);
+        } else if (c->have_last_sample && (end_ms - c->last_sample_ms) <= SCOPE_GAP_MS) {
+            ma = c->points_ma[last];
+            mw = c->points_mw[last];
+        }
+        SHIFT_LEFT(c->points_ma, n);
+        SHIFT_LEFT(c->points_mw, n);
+        SHIFT_LEFT(c->sums_ma, n);
+        SHIFT_LEFT(c->sums_mw, n);
+        SHIFT_LEFT(c->counts, n);
+        SHIFT_LEFT(c->chart_y, n);
+        c->points_ma[last] = ma;
+        c->points_mw[last] = mw;
+        c->sums_ma[last] = c->acc_ma.sum;
+        c->sums_mw[last] = c->acc_mw.sum;
+        c->counts[last] = c->acc_ma.count;
+        c->chart_y[last] = to_chart((s.cfg.mode == SCOPE_MODE_MA) ? ma : mw);
+        reset_acc(c);
     }
-    SHIFT_LEFT(s.points_ma, n);
-    SHIFT_LEFT(s.points_mw, n);
-    SHIFT_LEFT(s.sums_ma, n);
-    SHIFT_LEFT(s.sums_mw, n);
-    SHIFT_LEFT(s.counts, n);
-    SHIFT_LEFT(s.chart_y, n);
-    s.points_ma[last] = ma;
-    s.points_mw[last] = mw;
-    s.sums_ma[last] = s.acc_ma.sum;
-    s.sums_mw[last] = s.acc_mw.sum;
-    s.counts[last] = s.acc_ma.count;
-    s.chart_y[last] = to_chart((s.cfg.mode == SCOPE_MODE_MA) ? ma : mw);
-    reset_acc();
     s.trace_changed = true;
 }
 
@@ -574,19 +634,27 @@ static void process_sample(const sample_t *sample)
      * can't keep up still land on the right part of the time axis. */
     advance_to(sample->t_ms);
 
-    s.vbus_v = sample->vbus_v;
-    s.have_sample = true;
-    if (sample->current_ma > s.peak_ma) {
-        s.peak_ma = sample->current_ma;
-    }
-    if (sample->power_mw > s.peak_mw) {
-        s.peak_mw = sample->power_mw;
-    }
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        const sample_ch_t *in = &sample->ch[i];
+        scope_channel_t *c = &s.ch[i];
 
-    acc_add(&s.acc_ma, sample->current_ma);
-    acc_add(&s.acc_mw, sample->power_mw);
-    s.last_sample_ms = sample->t_ms;
-    s.have_last_sample = true;
+        /* NAN: the channel was off or absent when this sample was taken. */
+        if (isnan(in->current_ma)) {
+            continue;
+        }
+        c->vbus_v = in->vbus_v;
+        c->have_sample = true;
+        if (in->current_ma > c->peak_ma) {
+            c->peak_ma = in->current_ma;
+        }
+        if (in->power_mw > c->peak_mw) {
+            c->peak_mw = in->power_mw;
+        }
+        acc_add(&c->acc_ma, in->current_ma);
+        acc_add(&c->acc_mw, in->power_mw);
+        c->last_sample_ms = sample->t_ms;
+        c->have_last_sample = true;
+    }
 }
 
 /* Rebuild the whole trace from ring history so the display shows the window
@@ -644,6 +712,75 @@ static void apply_geometry(void)
 }
 
 static void update_labels(void);
+static void update_cursor_label(void);
+
+/* Over an empty chart, say why: nothing switched on, or nothing answered. */
+static void update_empty_label(void)
+{
+    int32_t state = 0;     /* 0 hidden, 1 none enabled, 2 enabled but absent */
+
+    if (visible_count() == 0U) {
+        state = 1;
+        for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+            if (s.cfg.ch_enabled[i]) {
+                state = 2;
+            }
+        }
+    }
+    if (state == s.empty_state) {
+        return;
+    }
+    s.empty_state = state;
+    if (state == 0) {
+        lv_obj_add_flag(s.empty_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_label_set_text(s.empty_label, (state == 1) ? "No channel enabled" : "No INA228 found");
+    lv_obj_center(s.empty_label);
+    lv_obj_remove_flag(s.empty_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* Show the channels that are enabled in settings and whose INA228 answered.
+ * Presence is only known once the sensor task has probed, so this also runs
+ * from the timer. Returns true if anything changed. */
+static bool apply_visibility(void)
+{
+    bool changed = false;
+
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        scope_channel_t *c = &s.ch[i];
+        bool visible = s.cfg.ch_enabled[i] && sensor_task_channel_present(i);
+
+        if (visible == c->visible) {
+            continue;
+        }
+        changed = true;
+        c->visible = visible;
+        lv_chart_hide_series(s.chart, c->series, !visible);
+        if (visible) {
+            lv_obj_remove_flag(c->vbus_label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(c->avg_label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(c->peak_label, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(c->vbus_label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(c->avg_label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(c->peak_label, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    update_empty_label();
+    if (!changed) {
+        return false;
+    }
+
+    if (s.cursor_point != LV_CHART_POINT_NONE) {
+        lv_chart_set_cursor_point(s.chart, s.cursor, cursor_series(),
+                                  (uint32_t)s.cursor_point);
+    }
+    refresh_range(true);
+    lv_chart_refresh(s.chart);
+    update_labels();
+    return true;
+}
 
 static void apply_settings(const settings_t *old)
 {
@@ -675,6 +812,10 @@ static void apply_settings(const settings_t *old)
             rebuild_from_ring();
         }
     }
+    /* Channel enables: apply_visibility() refreshes everything itself. */
+    if (apply_visibility()) {
+        return;
+    }
     if (mode_changed || geometry_changed || range_changed || decimation_changed) {
         refresh_range(true);
         lv_chart_refresh(s.chart);
@@ -700,13 +841,14 @@ static bool rate_is_low(const sensor_stats_t *st)
  *====================*/
 static void update_cursor_label(void)
 {
-    const float *points = active_points();
-    char value[24];
+    char text[24 * SAMPLE_CHANNELS + 16];
+    size_t pos = 0U;
     float rel_s;
     lv_point_t p;
     int32_t x;
     int32_t width;
     int32_t chart_w;
+    bool multi = (visible_count() > 1U);
 
     if (s.cursor_point == LV_CHART_POINT_NONE ||
         (uint32_t)s.cursor_point >= s.point_count) {
@@ -714,22 +856,41 @@ static void update_cursor_label(void)
         return;
     }
 
-    if (isnan(points[s.cursor_point])) {
-        snprintf(value, sizeof(value), "--");
-    } else {
-        format_value(value, sizeof(value), points[s.cursor_point], s.cfg.mode);
+    /* One line per visible channel ("CH2 1.23 mA" when there are several),
+     * then the time. LVGL's builtin sprintf has no %f; use the C library. */
+    text[0] = '\0';
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS && pos < sizeof(text); i++) {
+        scope_channel_t *c = &s.ch[i];
+        float v;
+        char value[24];
+        int n;
+
+        if (!c->visible) {
+            continue;
+        }
+        v = active_points(c)[s.cursor_point];
+        if (isnan(v)) {
+            snprintf(value, sizeof(value), "--");
+        } else {
+            format_value(value, sizeof(value), v, s.cfg.mode);
+        }
+        n = multi ? snprintf(text + pos, sizeof(text) - pos, "CH%lu %s\n",
+                             (unsigned long)(i + 1U), value)
+                  : snprintf(text + pos, sizeof(text) - pos, "%s\n", value);
+        if (n < 0) {
+            break;
+        }
+        pos += (size_t)n;
     }
     /* Points are equal time bins; the newest one ends at the right edge. */
     rel_s = -(float)(s.point_count - 1U - (uint32_t)s.cursor_point) *
             (float)window_ms() / (float)s.point_count / 1000.0f;
-    /* LVGL's builtin sprintf has no %f; format with the C library. */
-    {
-        char text[40];
-        snprintf(text, sizeof(text), "%s\n%.2f s", value, (double)rel_s);
-        lv_label_set_text(s.cursor_label, text);
+    if (pos < sizeof(text)) {
+        snprintf(text + pos, sizeof(text) - pos, "%.2f s", (double)rel_s);
     }
+    lv_label_set_text(s.cursor_label, text);
 
-    lv_chart_get_point_pos_by_id(s.chart, s.series, (uint32_t)s.cursor_point, &p);
+    lv_chart_get_point_pos_by_id(s.chart, cursor_series(), (uint32_t)s.cursor_point, &p);
     lv_obj_update_layout(s.cursor_label);
     width = lv_obj_get_width(s.cursor_label);
     chart_w = lv_obj_get_width(s.chart);
@@ -744,17 +905,17 @@ static void update_cursor_label(void)
     lv_obj_remove_flag(s.cursor_label, LV_OBJ_FLAG_HIDDEN);
 }
 
-static void update_labels(void)
+static void update_channel_labels(scope_channel_t *c)
 {
-    const float *sums = (s.cfg.mode == SCOPE_MODE_MA) ? s.sums_ma : s.sums_mw;
+    const float *sums = (s.cfg.mode == SCOPE_MODE_MA) ? c->sums_ma : c->sums_mw;
     char buf[24];
-    float peak = (s.cfg.mode == SCOPE_MODE_MA) ? s.peak_ma : s.peak_mw;
+    float peak = (s.cfg.mode == SCOPE_MODE_MA) ? c->peak_ma : c->peak_mw;
     double sum = 0.0;
     uint32_t count = 0U;
 
-    if (!s.have_sample) {
-        lv_label_set_text(s.avg_label, "avg --");
-        lv_label_set_text(s.peak_label, "pk --");
+    if (!c->have_sample) {
+        lv_label_set_text(c->avg_label, "avg --");
+        lv_label_set_text(c->peak_label, "pk --");
         return;
     }
 
@@ -762,22 +923,30 @@ static void update_labels(void)
      * decimation those are per-bin peaks. */
     for (uint32_t i = 0U; i < s.point_count; i++) {
         sum += (double)sums[i];
-        count += s.counts[i];
+        count += c->counts[i];
     }
     if (count > 0U) {
         format_value(buf, sizeof(buf), (float)(sum / (double)count), s.cfg.mode);
-        lv_label_set_text_fmt(s.avg_label, "avg %s", buf);
+        lv_label_set_text_fmt(c->avg_label, "avg %s", buf);
     } else {
-        lv_label_set_text(s.avg_label, "avg --");
+        lv_label_set_text(c->avg_label, "avg --");
     }
 
     if (peak > -INFINITY) {
         format_value(buf, sizeof(buf), peak, s.cfg.mode);
-        lv_label_set_text_fmt(s.peak_label, "pk %s", buf);
+        lv_label_set_text_fmt(c->peak_label, "pk %s", buf);
     } else {
-        lv_label_set_text(s.peak_label, "pk --");
+        lv_label_set_text(c->peak_label, "pk --");
     }
+}
 
+static void update_labels(void)
+{
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        if (s.ch[i].visible) {
+            update_channel_labels(&s.ch[i]);
+        }
+    }
     update_cursor_label();
 }
 
@@ -785,12 +954,19 @@ static void update_status(const sensor_stats_t *st)
 {
     uint32_t dropped = sample_ring_dropped(sensor_task_samples());
 
-    if (s.have_sample) {
-        char text[24];
-        snprintf(text, sizeof(text), "VBUS %.2f V", (double)s.vbus_v);
-        lv_label_set_text(s.vbus_label, text);
-    } else {
-        lv_label_set_text(s.vbus_label, "VBUS --.-- V");
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        scope_channel_t *c = &s.ch[i];
+
+        if (!c->visible) {
+            continue;
+        }
+        if (c->have_sample && !isnan(c->vbus_v)) {
+            char text[16];
+            snprintf(text, sizeof(text), "%.2f V", (double)c->vbus_v);
+            lv_label_set_text(c->vbus_label, text);
+        } else {
+            lv_label_set_text(c->vbus_label, "--.-- V");
+        }
     }
 
     if (dropped != 0U) {
@@ -857,6 +1033,9 @@ static void scope_tick(lv_timer_t *timer)
         s.settings_gen = gen;
         settings_get(&s.cfg);
         apply_settings(&old);
+    } else {
+        /* The sensor task reports which INA228s answered after start-up. */
+        (void)apply_visibility();
     }
 
     sensor_task_get_stats(&st);
@@ -866,11 +1045,15 @@ static void scope_tick(lv_timer_t *timer)
     head = sample_ring_head(ring);
 
     if (s.hold) {
-        /* Keep the VBUS readout live, discard everything else. */
+        /* Keep the VBUS readouts live, discard everything else. */
         sample_t latest;
         if (head != 0U && sample_ring_get(ring, head - 1U, &latest)) {
-            s.vbus_v = latest.vbus_v;
-            s.have_sample = true;
+            for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+                if (!isnan(latest.ch[i].vbus_v)) {
+                    s.ch[i].vbus_v = latest.ch[i].vbus_v;
+                    s.ch[i].have_sample = true;
+                }
+            }
         }
         s.next_seq = head;
     } else if (head - s.next_seq > window_samples()) {
@@ -994,7 +1177,7 @@ static void chart_event_cb(lv_event_t *e)
 
     if (id != s.cursor_point) {
         s.cursor_point = id;
-        lv_chart_set_cursor_point(s.chart, s.cursor, s.series, (uint32_t)id);
+        lv_chart_set_cursor_point(s.chart, s.cursor, cursor_series(), (uint32_t)id);
         update_cursor_label();
     }
 }
@@ -1045,7 +1228,12 @@ static void build_header(void)
     lv_obj_add_flag(s.drop_label, LV_OBJ_FLAG_HIDDEN);
     s.rate_label = ui_style_create_label(right, "", UI_FONT_SMALL, UI_COLOR_HOLD);
     lv_obj_add_flag(s.rate_label, LV_OBJ_FLAG_HIDDEN);
-    s.vbus_label = ui_style_create_label(right, "VBUS --.-- V", UI_FONT_BODY, UI_COLOR_TEXT);
+    /* VBUS per channel, in the channel's colour; apply_visibility() shows them. */
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        s.ch[i].vbus_label = ui_style_create_label(right, "--.-- V", UI_FONT_BODY,
+                                                   ui_style_channel_color(i));
+        lv_obj_add_flag(s.ch[i].vbus_label, LV_OBJ_FLAG_HIDDEN);
+    }
     /* set_hold() fills in the text and colour. */
     s.state_label = ui_style_create_label(right, "", UI_FONT_BODY, UI_COLOR_RUN);
 }
@@ -1120,11 +1308,21 @@ static void build_chart(void)
     lv_obj_add_event_cb(s.chart, chart_event_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(s.chart, chart_event_cb, LV_EVENT_PRESSING, NULL);
 
-    s.series = lv_chart_add_series(s.chart, lv_color_hex(UI_COLOR_ACCENT),
-                                   LV_CHART_AXIS_PRIMARY_Y);
-    lv_chart_set_series_ext_y_array(s.chart, s.series, s.chart_y);
+    /* One series per channel, hidden until apply_visibility() shows it. Later
+     * series draw on top, so CH1 is drawn first. */
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        s.ch[i].series = lv_chart_add_series(s.chart, lv_color_hex(ui_style_channel_color(i)),
+                                             LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_set_series_ext_y_array(s.chart, s.ch[i].series, s.ch[i].chart_y);
+        lv_chart_hide_series(s.chart, s.ch[i].series, true);
+    }
     s.cursor = lv_chart_add_cursor(s.chart, lv_color_hex(UI_COLOR_CURSOR), LV_DIR_VER);
     s.cursor_point = LV_CHART_POINT_NONE;
+
+    /* update_empty_label() sets the text. */
+    s.empty_label = ui_style_create_label(s.chart, "", UI_FONT_BODY, UI_COLOR_TEXT_DIM);
+    lv_obj_add_flag(s.empty_label, LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_remove_flag(s.empty_label, LV_OBJ_FLAG_CLICKABLE);
 
     s.cursor_label = ui_style_create_label(s.chart, "", UI_FONT_SMALL, UI_COLOR_CURSOR);
     lv_obj_set_style_bg_color(s.cursor_label, lv_color_hex(UI_COLOR_PANEL), 0);
@@ -1149,10 +1347,24 @@ static lv_obj_t *create_footer_row(void)
     return row;
 }
 
+/* A fixed-width column holding one readout line per channel. */
+static lv_obj_t *create_readout_column(lv_obj_t *row, int32_t width)
+{
+    lv_obj_t *col = lv_obj_create(row);
+
+    lv_obj_remove_style_all(col);
+    lv_obj_set_size(col, width, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_event_cb(col, background_click_cb, LV_EVENT_CLICKED, NULL);
+    return col;
+}
+
 static void build_footer(void)
 {
     lv_obj_t *row1;
     lv_obj_t *row2;
+    lv_obj_t *avg_col;
+    lv_obj_t *peak_col;
 
     s.footer = ui_style_create_panel(s.screen);
     lv_obj_set_size(s.footer, LV_PCT(100), SCOPE_FOOTER_HEIGHT);
@@ -1195,14 +1407,26 @@ static void build_footer(void)
 
     s.div_label = ui_style_create_label(row2, "1 s/div", UI_FONT_BODY, UI_COLOR_TEXT_DIM);
     lv_obj_set_width(s.div_label, SCOPE_DIV_LABEL_WIDTH);
-    s.avg_label = ui_style_create_label(row2, "avg --", UI_FONT_BODY, UI_COLOR_TEXT_DIM);
-    lv_obj_set_width(s.avg_label, SCOPE_AVG_LABEL_WIDTH);
-    lv_obj_set_style_text_align(s.avg_label, LV_TEXT_ALIGN_CENTER, 0);
-    s.peak_label = ui_style_create_label(row2, "pk --", UI_FONT_BODY, UI_COLOR_TEXT);
-    lv_obj_set_width(s.peak_label, SCOPE_PEAK_LABEL_WIDTH);
-    lv_obj_set_style_text_align(s.peak_label, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_add_flag(s.peak_label, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(s.peak_label, peak_event_cb, LV_EVENT_LONG_PRESSED, NULL);
+
+    /* avg and pk per channel, in the channel's colour; long-press the peak
+     * column to reset every channel's peak. */
+    avg_col = create_readout_column(row2, SCOPE_AVG_LABEL_WIDTH);
+    peak_col = create_readout_column(row2, SCOPE_PEAK_LABEL_WIDTH);
+    lv_obj_add_flag(peak_col, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(peak_col, peak_event_cb, LV_EVENT_LONG_PRESSED, NULL);
+    for (uint32_t i = 0U; i < SAMPLE_CHANNELS; i++) {
+        uint32_t color = ui_style_channel_color(i);
+
+        s.ch[i].avg_label = ui_style_create_label(avg_col, "avg --", UI_FONT_BODY, color);
+        lv_obj_set_width(s.ch[i].avg_label, LV_PCT(100));
+        lv_obj_set_style_text_align(s.ch[i].avg_label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_add_flag(s.ch[i].avg_label, LV_OBJ_FLAG_HIDDEN);
+
+        s.ch[i].peak_label = ui_style_create_label(peak_col, "pk --", UI_FONT_BODY, color);
+        lv_obj_set_width(s.ch[i].peak_label, LV_PCT(100));
+        lv_obj_set_style_text_align(s.ch[i].peak_label, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_add_flag(s.ch[i].peak_label, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 lv_obj_t *ui_scope_create(void)
@@ -1231,6 +1455,7 @@ lv_obj_t *ui_scope_create(void)
     lv_buttonmatrix_set_button_ctrl(s.mode_matrix, (uint32_t)s.cfg.mode,
                                     LV_BUTTONMATRIX_CTRL_CHECKED);
     refresh_range(true);    /* no data yet: the default range for the unit */
+    (void)apply_visibility();
     set_hold(false);
 
     s.timer = lv_timer_create(scope_tick, 1000U / SCOPE_REFRESH_HZ, NULL);
